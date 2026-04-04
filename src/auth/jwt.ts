@@ -97,7 +97,7 @@ export function verifyJWT(token: string, secret: string): JWTPayload {
 /**
  * Generate an Authorization header value.
  */
-export function authorizationHeader(secret: string, userId: string, botId = 'admin-sdk'): string {
+export function authorizationHeader(secret: string, userId: string, botId = ''): string {
   const token = generateJWT(secret, { botId, userId, privateIp: 'k8s' });
   return `Bearer ${token}`;
 }

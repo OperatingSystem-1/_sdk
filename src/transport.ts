@@ -34,7 +34,7 @@ export class Transport {
 
     if (this.config.jwt) {
       return {
-        Authorization: authorizationHeader(this.config.jwt.jwtSecret, 'admin-sdk'),
+        Authorization: authorizationHeader(this.config.jwt.jwtSecret, this.config.jwt.userId ?? 'admin-sdk'),
       };
     }
 

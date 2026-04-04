@@ -2,6 +2,8 @@
 
 export interface JWTAuthConfig {
   jwtSecret: string;
+  /** User ID to embed in JWT tokens (required for owner-scoped endpoints) */
+  userId?: string;
 }
 
 export interface AgentAuthConfig {
