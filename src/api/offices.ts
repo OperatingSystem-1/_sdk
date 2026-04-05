@@ -1,26 +1,25 @@
 import type { Transport } from '../transport.js';
-import type {
-  Office,
-  CreateOfficeRequest,
-  OfficeSettings,
-  ClusterStatus,
-} from '../types/index.js';
+import type { Office, CreateOfficeRequest, OfficeSettings, ClusterStatus } from '../types/index.js';
 
 const BASE = '/api/v1/offices';
 
 export class OfficesAPI {
   constructor(private transport: Transport) {}
 
-  async create(req: CreateOfficeRequest): Promise<Office> {
-    return this.transport.post<Office>(BASE, req);
-  }
-
   async list(): Promise<Office[]> {
     return this.transport.get<Office[]>(BASE);
   }
 
+  async create(req: CreateOfficeRequest): Promise<Office> {
+    return this.transport.post<Office>(BASE, req);
+  }
+
   async get(officeId: string): Promise<Office> {
     return this.transport.get<Office>(`${BASE}/${officeId}`);
+  }
+
+  async status(officeId: string): Promise<ClusterStatus> {
+    return this.transport.get<ClusterStatus>(`${BASE}/${officeId}/status`);
   }
 
   async getSettings(officeId: string): Promise<OfficeSettings> {
@@ -33,26 +32,6 @@ export class OfficesAPI {
 
   async delete(officeId: string): Promise<void> {
     await this.transport.delete(`${BASE}/${officeId}`);
-  }
-
-  async status(officeId: string): Promise<ClusterStatus> {
-    return this.transport.get<ClusterStatus>(`${BASE}/${officeId}/status`);
-  }
-
-  async kubeconfig(officeId: string): Promise<string> {
-    return this.transport.get<string>(`${BASE}/${officeId}/kubeconfig`);
-  }
-
-  async transfer(officeId: string, newOwnerId: string): Promise<void> {
-    await this.transport.post(`${BASE}/${officeId}/transfer`, { new_owner_id: newOwnerId });
-  }
-
-  async rotateSecret(officeId: string): Promise<{ secret: string }> {
-    return this.transport.post<{ secret: string }>(`${BASE}/${officeId}/rotate-secret`);
-  }
-
-  async setSecret(officeId: string, secretName: string, value: string): Promise<void> {
-    await this.transport.put(`${BASE}/${officeId}/secrets/${secretName}`, { value });
   }
 
   async suspend(officeId: string): Promise<void> {

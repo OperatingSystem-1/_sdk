@@ -1,18 +1,16 @@
 {
-  "name": "@os1/admin-sdk",
+  "name": "@os1/sdk",
   "version": "0.1.0",
-  "description": "Admin SDK for the OS-1 platform — typed API client, secp256k1/JWT auth, XMTP messaging, CLI",
+  "description": "TypeScript SDK for managing OS-1 offices, agents, and integrations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "os1-admin": "dist/cli/index.js"
+    "os1": "dist/cli/index.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest run --exclude tests/integration.test.ts",
-    "test:integration": "vitest run tests/integration.test.ts",
-    "test:all": "vitest run",
+    "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist",
@@ -22,21 +20,17 @@
     "dist",
     "README.md"
   ],
-  "keywords": ["os1", "admin", "sdk", "agents", "xmtp", "secp256k1"],
+  "keywords": ["os1", "sdk", "offices", "agents", "integrations"],
   "type": "module",
   "license": "MIT",
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@noble/secp256k1": "^2.1.0",
-    "@noble/hashes": "^1.4.0",
-    "commander": "^12.1.0",
-    "ws": "^8.18.0"
+    "commander": "^12.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
-    "@types/ws": "^8.5.12",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   }
