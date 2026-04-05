@@ -98,7 +98,7 @@ program
         key = code;
       } else {
         // It's an invite code — claim it
-        const resp = await fetch(`${endpoint}/api/v1/auth/claim`, {
+        const resp = await fetch(`${endpoint}/auth/claim`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code }),
