@@ -2,33 +2,37 @@ import type { Transport } from '../transport.js';
 import type { ModelInfo, IntegrationSecret, SetSecretRequest } from '../types/index.js';
 
 function base(officeId: string) {
-  return `/api/v1/offices/${officeId}/integrations`;
+  return `/api/v1/offices/${officeId}`;
 }
 
+/**
+ * Integrations API matching router.go:
+ *   GET  /provider-models
+ *   POST /integrations/{integrationId}/secret
+ *   DELETE /integrations/{integrationId}/secret
+ *   POST /integrations/{integrationId}/agents/{agentName}
+ *   POST /integrations/claude-code/sync-key
+ */
 export class IntegrationsAPI {
   constructor(private transport: Transport) {}
 
-  async listModels(officeId: string): Promise<ModelInfo[]> {
-    return this.transport.get<ModelInfo[]>(`${base(officeId)}/models`);
+  async listProviderModels(officeId: string): Promise<ModelInfo[]> {
+    return this.transport.get<ModelInfo[]>(`${base(officeId)}/provider-models`);
   }
 
-  async listSecrets(officeId: string): Promise<IntegrationSecret[]> {
-    return this.transport.get<IntegrationSecret[]>(`${base(officeId)}/secrets`);
+  async ensureSecret(officeId: string, integrationId: string, key: string): Promise<void> {
+    await this.transport.post(`${base(officeId)}/integrations/${integrationId}/secret`, { key });
   }
 
-  async setSecret(officeId: string, req: SetSecretRequest): Promise<void> {
-    await this.transport.post(`${base(officeId)}/secrets`, req);
+  async deleteSecret(officeId: string, integrationId: string): Promise<void> {
+    await this.transport.delete(`${base(officeId)}/integrations/${integrationId}/secret`);
   }
 
-  async deleteSecret(officeId: string, provider: string): Promise<void> {
-    await this.transport.delete(`${base(officeId)}/secrets/${provider}`);
-  }
-
-  async setAgentToggle(officeId: string, agentId: string, provider: string, enabled: boolean): Promise<void> {
-    await this.transport.put(`${base(officeId)}/agent/${agentId}/${provider}`, { enabled });
+  async toggleAgent(officeId: string, integrationId: string, agentName: string, enabled: boolean): Promise<void> {
+    await this.transport.post(`${base(officeId)}/integrations/${integrationId}/agents/${agentName}`, { enabled });
   }
 
   async syncClaudeCodeKey(officeId: string): Promise<void> {
-    await this.transport.post(`${base(officeId)}/claude-code/sync-key`);
+    await this.transport.post(`${base(officeId)}/integrations/claude-code/sync-key`);
   }
 }

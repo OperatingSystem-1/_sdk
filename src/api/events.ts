@@ -116,6 +116,10 @@ export class EnvAPI {
 export class DelegatesAPI {
   constructor(private transport: Transport) {}
 
+  async list(officeId: string): Promise<Delegate[]> {
+    return this.transport.get<Delegate[]>(`${base(officeId)}/delegates`);
+  }
+
   async get(officeId: string, agentId: string): Promise<Delegate> {
     return this.transport.get<Delegate>(`${base(officeId)}/delegates/${agentId}`);
   }
@@ -216,24 +220,55 @@ export class LLMPingAPI {
 }
 
 // ─── WhatsApp ────────────────────────────────────────────────────────────────
+// Matches router.go: per-agent QR pairing + office-level WhatsApp management
 
 export class WhatsAppAPI {
   constructor(private transport: Transport) {}
 
-  async qr(officeId: string): Promise<{ qr: string }> {
-    return this.transport.get<{ qr: string }>(`${base(officeId)}/whatsapp/qr`);
+  // Per-agent QR pairing flow
+  async qrStart(officeId: string, name: string): Promise<void> {
+    await this.transport.post(`${base(officeId)}/employees/${name}/whatsapp/qr-start`);
   }
 
-  async status(officeId: string): Promise<WhatsAppStatus> {
-    return this.transport.get<WhatsAppStatus>(`${base(officeId)}/whatsapp/status`);
+  async qrStatus(officeId: string, name: string): Promise<WhatsAppStatus> {
+    return this.transport.get<WhatsAppStatus>(`${base(officeId)}/employees/${name}/whatsapp/qr-status`);
   }
 
-  async setAgent(officeId: string, agentId: string): Promise<void> {
-    await this.transport.put(`${base(officeId)}/whatsapp/agent/${agentId}`, {});
+  async qrStop(officeId: string, name: string): Promise<void> {
+    await this.transport.post(`${base(officeId)}/employees/${name}/whatsapp/qr-stop`);
   }
 
-  async register(officeId: string): Promise<void> {
-    await this.transport.post(`${base(officeId)}/whatsapp/register`);
+  async sessionStatus(officeId: string, name: string): Promise<WhatsAppStatus> {
+    return this.transport.get<WhatsAppStatus>(`${base(officeId)}/employees/${name}/whatsapp/status`);
+  }
+
+  async reset(officeId: string, name: string): Promise<void> {
+    await this.transport.post(`${base(officeId)}/employees/${name}/whatsapp/reset`);
+  }
+
+  // Office-level WhatsApp management
+  async agentStatus(officeId: string): Promise<unknown> {
+    return this.transport.get(`${base(officeId)}/whatsapp/agents`);
+  }
+
+  async toggleAgentAccess(officeId: string, agentName: string, enabled: boolean): Promise<void> {
+    await this.transport.post(`${base(officeId)}/whatsapp/agents/${agentName}/access`, { enabled });
+  }
+
+  async registerAgent(officeId: string, agentName: string): Promise<void> {
+    await this.transport.post(`${base(officeId)}/whatsapp/agents/${agentName}/register`);
+  }
+
+  async officeQRStart(officeId: string): Promise<void> {
+    await this.transport.post(`${base(officeId)}/whatsapp/qr-start`);
+  }
+
+  async officeQRStatus(officeId: string): Promise<unknown> {
+    return this.transport.get(`${base(officeId)}/whatsapp/qr-status`);
+  }
+
+  async officeReset(officeId: string): Promise<void> {
+    await this.transport.post(`${base(officeId)}/whatsapp/reset`);
   }
 }
 
@@ -254,7 +289,31 @@ export class ChromiumAPI {
     await this.transport.post(`${base(officeId)}/chromium/done`);
   }
 
-  async delete(officeId: string, instanceId: string): Promise<void> {
-    await this.transport.delete(`${base(officeId)}/chromium/${instanceId}`);
+  async delete(officeId: string): Promise<void> {
+    await this.transport.delete(`${base(officeId)}/chromium`);
+  }
+}
+
+// ─── Capabilities ────────────────────────────────────────────────────────────
+
+export class CapabilitiesAPI {
+  constructor(private transport: Transport) {}
+
+  async self(officeId: string): Promise<unknown> {
+    return this.transport.get(`${base(officeId)}/capabilities/self`);
+  }
+}
+
+// ─── Code/Codex Proxy ────────────────────────────────────────────────────────
+
+export class ProxyAPI {
+  constructor(private transport: Transport) {}
+
+  async teardownCodeProxy(officeId: string): Promise<void> {
+    await this.transport.delete(`${base(officeId)}/code-proxy`);
+  }
+
+  async teardownCodexProxy(officeId: string): Promise<void> {
+    await this.transport.delete(`${base(officeId)}/codex-proxy`);
   }
 }

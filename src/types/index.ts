@@ -65,38 +65,141 @@ export interface OfficeSettings {
   [key: string]: unknown;
 }
 
-export interface OfficeStatus {
-  office_id: string;
-  namespace: string;
-  agents: number;
-  status: string;
+/** Matches office-manager internal/k8s/infrastructure.go ClusterStatus */
+export interface ClusterStatus {
+  phase: 'ready' | 'degraded' | 'failed' | 'provisioning';
+  operator: ComponentStatus;
+  ingress: ComponentStatus;
+  ingressEndpoint?: string;
+  message?: string;
+}
+
+export interface ComponentStatus {
+  ready: boolean;
+  message?: string;
 }
 
 // ─── Employee (Agent) ────────────────────────────────────────────────────────
+// Matches office-manager internal/models/employee.go
 
 export interface Employee {
   name: string;
-  office_id: string;
-  status: string;
   role?: string;
-  model?: string;
-  public_key?: string;
-  created_at: string;
-  updated_at?: string;
+  modelTier: string;
+  modelProvider: string;
+  skills?: string[];
+  channels?: EmployeeChannels;
+  resources?: EmployeeResources;
+  storage?: string;
+  selfConfigure?: boolean;
+  autoUpdate?: boolean;
+  chromium?: boolean;
+  webTerminal?: boolean;
+  backup?: BackupConfig;
+  imageTag?: string;
+  customConfig?: Record<string, unknown>;
+  env?: Record<string, string>;
+  envSecrets?: string[];
+  systemPrompt?: string;
+  status: EmployeeStatus;
+}
+
+export interface EmployeeChannels {
+  whatsapp?: boolean;
+  discord?: boolean;
+  telegram?: boolean;
+  signal?: boolean;
+  xmtp?: boolean;
+}
+
+export interface EmployeeResources {
+  cpuRequest?: string;
+  cpuLimit?: string;
+  memoryRequest?: string;
+  memoryLimit?: string;
+}
+
+export interface BackupConfig {
+  schedule?: string;
+  enabled?: boolean;
+}
+
+export interface EmployeeStatus {
+  phase: string;
+  ready: boolean;
+  gatewayEndpoint?: string;
+  accessUrl?: string;
+  accessToken?: string;
+  lastSeen?: string;
+  message?: string;
+}
+
+export interface AgentKitOwner {
+  name?: string;
+  phone?: string;
+  email?: string;
+  context?: string;
+}
+
+export interface AgentKitConfig {
+  enabled?: boolean;
+  taskQueue?: boolean;
+  disableTaskQueue?: boolean;
+  neonSecret?: string;
+  owner?: AgentKitOwner;
+  personality?: string;
 }
 
 export interface HireRequest {
   name: string;
   role?: string;
-  model?: string;
+  modelTier?: string;
   skills?: string[];
+  channels?: EmployeeChannels;
+  resources?: EmployeeResources;
+  storage?: string;
+  selfConfigure?: boolean;
+  autoUpdate?: boolean;
+  chromium?: boolean;
+  webTerminal?: boolean;
+  imageTag?: string;
+  systemPrompt?: string;
   env?: Record<string, string>;
+  envSecrets?: string[];
+  customConfig?: Record<string, unknown>;
+  agentKit?: AgentKitConfig;
+  botId?: string;
+  bedrockCredentials?: { accessKeyId: string; secretAccessKey: string; region: string };
+  restoreFromBackup?: string;
 }
 
 export interface UpdateEmployeeRequest {
   role?: string;
-  model?: string;
+  modelTier?: string;
   skills?: string[];
+  channels?: EmployeeChannels;
+  resources?: EmployeeResources;
+  storage?: string;
+  selfConfigure?: boolean;
+  autoUpdate?: boolean;
+  chromium?: boolean;
+  webTerminal?: boolean;
+  imageTag?: string;
+  systemPrompt?: string;
+  env?: Record<string, string>;
+  envSecrets?: string[];
+  customConfig?: Record<string, unknown>;
+}
+
+export interface PromoteRequest {
+  modelTier: string;
+  provider?: string;
+  resources?: EmployeeResources;
+}
+
+export interface SkillsRequest {
+  add?: string[];
+  remove?: string[];
 }
 
 export interface EmployeeAction {
@@ -309,6 +412,15 @@ export interface WhatsAppStatus {
   connected: boolean;
   phone_number?: string;
   agent_id?: string;
+}
+
+export interface WhatsAppQRStatus {
+  status: string;
+  qr?: string;
+}
+
+export interface WhatsAppAgentStatus {
+  agents: Array<{ name: string; whatsapp_enabled: boolean }>;
 }
 
 // ─── Chromium ────────────────────────────────────────────────────────────────

@@ -196,13 +196,13 @@ agents
   .requiredOption('-o, --office <officeId>', 'Office ID')
   .requiredOption('-n, --name <name>', 'Agent name')
   .option('-r, --role <role>', 'Agent role')
-  .option('-m, --model <model>', 'LLM model')
+  .option('-m, --model <model>', 'Model tier (opus/sonnet/haiku)')
   .action(async (opts) => {
     const client = await getClient();
     json(await client.employees.hire(opts.office, {
       name: opts.name,
       role: opts.role,
-      model: opts.model,
+      modelTier: opts.model,
     }));
   });
 

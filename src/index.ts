@@ -42,6 +42,8 @@ export {
   LLMPingAPI,
   WhatsAppAPI,
   ChromiumAPI,
+  CapabilitiesAPI,
+  ProxyAPI,
 } from './api/events.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import type {
   Office,
   CreateOfficeRequest,
   OfficeSettings,
-  OfficeStatus,
+  ClusterStatus,
 } from '../types/index.js';
 
 const BASE = '/api/v1/offices';
@@ -19,6 +19,10 @@ export class OfficesAPI {
     return this.transport.get<Office[]>(BASE);
   }
 
+  async get(officeId: string): Promise<Office> {
+    return this.transport.get<Office>(`${BASE}/${officeId}`);
+  }
+
   async getSettings(officeId: string): Promise<OfficeSettings> {
     return this.transport.get<OfficeSettings>(`${BASE}/${officeId}/settings`);
   }
@@ -31,8 +35,8 @@ export class OfficesAPI {
     await this.transport.delete(`${BASE}/${officeId}`);
   }
 
-  async status(officeId: string): Promise<OfficeStatus> {
-    return this.transport.get<OfficeStatus>(`${BASE}/${officeId}/status`);
+  async status(officeId: string): Promise<ClusterStatus> {
+    return this.transport.get<ClusterStatus>(`${BASE}/${officeId}/status`);
   }
 
   async kubeconfig(officeId: string): Promise<string> {

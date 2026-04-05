@@ -22,6 +22,8 @@ import {
   LLMPingAPI,
   WhatsAppAPI,
   ChromiumAPI,
+  CapabilitiesAPI,
+  ProxyAPI,
 } from './api/events.js';
 import { XMTPChannel } from './xmtp/channel.js';
 
@@ -68,6 +70,8 @@ export class OS1AdminClient {
   readonly llmPing: LLMPingAPI;
   readonly whatsapp: WhatsAppAPI;
   readonly chromium: ChromiumAPI;
+  readonly capabilities: CapabilitiesAPI;
+  readonly proxy: ProxyAPI;
 
   // ─── XMTP Channel ───────────────────────────────────────────────
   readonly xmtp: XMTPChannel;
@@ -97,6 +101,8 @@ export class OS1AdminClient {
     this.llmPing = new LLMPingAPI(this.transport);
     this.whatsapp = new WhatsAppAPI(this.transport);
     this.chromium = new ChromiumAPI(this.transport);
+    this.capabilities = new CapabilitiesAPI(this.transport);
+    this.proxy = new ProxyAPI(this.transport);
 
     // XMTP channel manager
     this.xmtp = new XMTPChannel(this.transport);

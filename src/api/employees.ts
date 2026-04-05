@@ -3,6 +3,8 @@ import type {
   Employee,
   HireRequest,
   UpdateEmployeeRequest,
+  PromoteRequest,
+  SkillsRequest,
   EmployeeAction,
   EmployeeLogs,
   ActivityEvent,
@@ -59,12 +61,16 @@ export class EmployeesAPI {
     return this.transport.post(`${base(officeId)}/${name}/action`, action);
   }
 
-  async promote(officeId: string, name: string): Promise<void> {
-    await this.transport.post(`${base(officeId)}/${name}/promote`);
+  async promote(officeId: string, name: string, req: PromoteRequest): Promise<Employee> {
+    return this.transport.post<Employee>(`${base(officeId)}/${name}/promote`, req);
   }
 
-  async setSkills(officeId: string, name: string, skills: string[]): Promise<void> {
-    await this.transport.post(`${base(officeId)}/${name}/skills`, { skills });
+  async setSkills(officeId: string, name: string, req: SkillsRequest): Promise<Employee> {
+    return this.transport.post<Employee>(`${base(officeId)}/${name}/skills`, req);
+  }
+
+  async logStatusEvent(officeId: string, name: string, event: { type: string; message?: string }): Promise<void> {
+    await this.transport.post(`${base(officeId)}/${name}/events`, event);
   }
 
   async archive(officeId: string, name: string): Promise<void> {

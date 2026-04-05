@@ -11,6 +11,19 @@ function base(officeId: string) {
   return `/api/v1/offices/${officeId}/xmtp`;
 }
 
+/**
+ * XMTP API matching office-manager router.go routes:
+ *   GET  /xmtp/conversations
+ *   GET  /xmtp/messages/{agentName}/{peerName}
+ *   POST /xmtp/send
+ *   GET  /xmtp/groups
+ *   POST /xmtp/groups
+ *   GET  /xmtp/groups/{groupId}/messages
+ *   POST /xmtp/groups/{groupId}/send
+ *   POST /xmtp/groups/{groupId}/members
+ *   DELETE /xmtp/groups/{groupId}/members/{agentName}
+ *   PATCH /xmtp/groups/{groupId}
+ */
 export class XMTPAPI {
   constructor(private transport: Transport) {}
 
@@ -22,24 +35,18 @@ export class XMTPAPI {
 
   async getMessages(
     officeId: string,
-    conversationId: string,
+    agentName: string,
+    peerName: string,
     opts?: { limit?: number },
   ): Promise<XMTPMessage[]> {
     return this.transport.get<XMTPMessage[]>(
-      `${base(officeId)}/conversations/${conversationId}/messages`,
+      `${base(officeId)}/messages/${agentName}/${peerName}`,
       opts,
     );
   }
 
-  async sendMessage(
-    officeId: string,
-    conversationId: string,
-    req: SendXMTPMessageRequest,
-  ): Promise<void> {
-    await this.transport.post(
-      `${base(officeId)}/conversations/${conversationId}/messages`,
-      req,
-    );
+  async send(officeId: string, req: SendXMTPMessageRequest): Promise<void> {
+    await this.transport.post(`${base(officeId)}/send`, req);
   }
 
   // ─── Groups ───────────────────────────────────────────────────────
@@ -52,23 +59,34 @@ export class XMTPAPI {
     return this.transport.post<XMTPGroup>(`${base(officeId)}/groups`, req);
   }
 
-  async getGroup(officeId: string, groupId: string): Promise<XMTPGroup> {
-    return this.transport.get<XMTPGroup>(`${base(officeId)}/groups/${groupId}`);
+  async getGroupMessages(
+    officeId: string,
+    groupId: string,
+    opts?: { limit?: number },
+  ): Promise<XMTPMessage[]> {
+    return this.transport.get<XMTPMessage[]>(
+      `${base(officeId)}/groups/${groupId}/messages`,
+      opts,
+    );
   }
 
-  async addMembers(officeId: string, groupId: string, members: string[]): Promise<void> {
-    await this.transport.post(`${base(officeId)}/groups/${groupId}/add-members`, { members });
-  }
-
-  async removeMembers(officeId: string, groupId: string, members: string[]): Promise<void> {
-    await this.transport.post(`${base(officeId)}/groups/${groupId}/remove-members`, { members });
-  }
-
-  async postMessage(
+  async sendGroupMessage(
     officeId: string,
     groupId: string,
     req: SendXMTPMessageRequest,
   ): Promise<void> {
-    await this.transport.post(`${base(officeId)}/groups/${groupId}/post-message`, req);
+    await this.transport.post(`${base(officeId)}/groups/${groupId}/send`, req);
+  }
+
+  async addMember(officeId: string, groupId: string, agentName: string): Promise<void> {
+    await this.transport.post(`${base(officeId)}/groups/${groupId}/members`, { agentName });
+  }
+
+  async removeMember(officeId: string, groupId: string, agentName: string): Promise<void> {
+    await this.transport.delete(`${base(officeId)}/groups/${groupId}/members/${agentName}`);
+  }
+
+  async renameGroup(officeId: string, groupId: string, name: string): Promise<void> {
+    await this.transport.patch(`${base(officeId)}/groups/${groupId}`, { name });
   }
 }
