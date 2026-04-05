@@ -40,14 +40,17 @@ Get your API key from the [OS-1 dashboard](https://mitosislabs.ai/dashboard/sett
 ```typescript
 const client = new OS1Client({
   endpoint: 'https://api.mitosislabs.ai',
-  apiKey: 'os1_...',
+  auth: { type: 'apiKey', key: 'os1_...' },
 });
 ```
 
-Or use the CLI:
+Or use the CLI to save credentials or run the OAuth device flow:
 
 ```bash
-os1 init --key os1_...
+os1 init --endpoint https://api.mitosislabs.ai --key os1_...
+os1 login api-key --key os1_...
+os1 login device  # prints a URL + code you approve in the dashboard
+os1 auth-test
 os1 offices list
 os1 agents list --office <id>
 ```
@@ -91,17 +94,23 @@ client.integrations.toggleAgent(officeId, integrationId, agentName, enabled)
 ## CLI
 
 ```bash
-# Setup
+# Credentials
 os1 init --endpoint https://api.mitosislabs.ai --key <api-key>
+os1 login api-key --key <api-key>
+os1 login device
+os1 logout
+os1 auth-test
 
 # Offices
 os1 offices list
 os1 offices create --name "my-office"
 os1 offices status <officeId>
+os1 offices delete <officeId>
 
 # Agents
 os1 agents list --office <officeId>
 os1 agents hire --office <officeId> --name "aria" --model opus
+os1 agents get <officeId> aria
 os1 agents fire <officeId> aria
 os1 agents logs <officeId> aria
 

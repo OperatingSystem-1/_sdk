@@ -1,4 +1,4 @@
-import type { ClientConfig } from './types/index.js';
+import type { AuthConfig, ClientConfig } from './types/index.js';
 import { makeAuthHeader } from './auth/index.js';
 import { OS1Error } from './types/index.js';
 
@@ -9,8 +9,15 @@ export class Transport {
     this.config = config;
   }
 
-  private authHeaders(): Record<string, string> {
-    return { Authorization: makeAuthHeader(this.config.apiKey, this.config.userId) };
+  private async authHeaders(): Promise<Record<string, string>> {
+    const auth = this.config.auth;
+    if (auth.type === 'apiKey') {
+      return { Authorization: makeAuthHeader(auth.key, auth.userId) };
+    }
+    if (auth.type === 'token') {
+      return { Authorization: `Bearer ${auth.token}` };
+    }
+    throw new Error('Unsupported auth configuration');
   }
 
   async request<T>(
@@ -33,7 +40,7 @@ export class Transport {
     }
 
     const url = `${this.config.endpoint}${fullPath}`;
-    const headers: Record<string, string> = { ...this.authHeaders() };
+    const headers: Record<string, string> = { ...(await this.authHeaders()) };
 
     if (options?.body && !(options.body instanceof FormData)) {
       headers['Content-Type'] = 'application/json';

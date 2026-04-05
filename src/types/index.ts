@@ -3,12 +3,23 @@
 export interface ClientConfig {
   /** OS-1 API endpoint */
   endpoint: string;
-  /** API key from the OS-1 dashboard */
-  apiKey: string;
-  /** User ID (auto-detected from API key if not provided) */
-  userId?: string;
+  /** Authentication configuration */
+  auth: AuthConfig;
   /** Request timeout in ms (default: 30000) */
   timeout?: number;
+}
+
+export type AuthConfig = ApiKeyAuth | TokenAuth;
+
+export interface ApiKeyAuth {
+  type: 'apiKey';
+  key: string;
+  userId?: string;
+}
+
+export interface TokenAuth {
+  type: 'token';
+  token: string;
 }
 
 // ─── Office ──────────────────────────────────────────────────────────────────

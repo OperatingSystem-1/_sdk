@@ -6,7 +6,7 @@ describe('OS1Client', () => {
   it('initializes public API modules', () => {
     const client = new OS1Client({
       endpoint: 'https://api.example.com',
-      apiKey: 'test-key',
+      auth: { type: 'apiKey', key: 'test-key' },
     });
 
     expect(client.offices).toBeTruthy();
