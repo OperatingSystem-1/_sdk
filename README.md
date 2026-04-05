@@ -10,49 +10,43 @@ npm install @os1/sdk
 
 ## Quick Start
 
+```bash
+mi login
+```
+
+Opens the dashboard in your browser to create an API key, then prompts you to paste it.
+
 ```typescript
 import { OS1Client } from '@os1/sdk';
 
 const client = new OS1Client({
-  endpoint: 'https://api.mitosislabs.ai',
-  apiKey: process.env.OS1_API_KEY,
+  endpoint: 'https://m.mitosislabs.ai',
+  auth: { type: 'token', token: process.env.MI_API_KEY! },
 });
 
-// List your offices
 const offices = await client.offices.list();
-
-// Hire an agent
-const agent = await client.agents.hire(offices[0].id, {
-  name: 'aria',
-  role: 'researcher',
-  modelTier: 'opus',
-});
-
-// Fetch the created agent
-const created = await client.agents.get(offices[0].id, 'aria');
-console.log(created.name);
+const agents = await client.agents.list(offices[0].id);
 ```
 
-## Authentication
-
-Get your API key from the [OS-1 dashboard](https://mitosislabs.ai/dashboard/settings).
-
-```typescript
-const client = new OS1Client({
-  endpoint: 'https://api.mitosislabs.ai',
-  auth: { type: 'apiKey', key: 'os1_...' },
-});
-```
-
-Or use the CLI to save credentials or run the OAuth device flow:
+## CLI
 
 ```bash
-os1 init --endpoint https://api.mitosislabs.ai --key os1_...
-os1 login api-key --key os1_...
-os1 login device  # prints a URL + code you approve in the dashboard
-os1 auth-test
-os1 offices list
-os1 agents list --office <id>
+mi login          # authenticate
+mi logout         # clear credentials
+mi whoami         # show auth status
+
+mi offices list
+mi offices create --name "my-office"
+mi offices status <officeId>
+mi offices delete <officeId>
+
+mi agents list --office <officeId>
+mi agents hire --office <officeId> --name "aria" --model opus
+mi agents get <officeId> aria
+mi agents fire <officeId> aria
+mi agents logs <officeId> aria
+
+mi api GET /api/v1/offices
 ```
 
 ## API
@@ -65,8 +59,6 @@ client.offices.create({ name: 'my-office' })
 client.offices.get(officeId)
 client.offices.status(officeId)
 client.offices.delete(officeId)
-client.offices.suspend(officeId)
-client.offices.resume(officeId)
 ```
 
 ### Agents
@@ -75,11 +67,9 @@ client.offices.resume(officeId)
 client.agents.hire(officeId, { name, role?, modelTier?, skills? })
 client.agents.list(officeId)
 client.agents.get(officeId, name)
-client.agents.update(officeId, name, { role?, modelTier?, skills? })
 client.agents.fire(officeId, name)
 client.agents.logs(officeId, name)
 client.agents.activity(officeId, name, { limit?, category? })
-client.agents.promote(officeId, name, { modelTier })
 ```
 
 ### Integrations
@@ -89,33 +79,6 @@ client.integrations.listModels(officeId)
 client.integrations.setSecret(officeId, integrationId, key)
 client.integrations.deleteSecret(officeId, integrationId)
 client.integrations.toggleAgent(officeId, integrationId, agentName, enabled)
-```
-
-## CLI
-
-```bash
-# Credentials
-os1 init --endpoint https://api.mitosislabs.ai --key <api-key>
-os1 login api-key --key <api-key>
-os1 login device
-os1 logout
-os1 auth-test
-
-# Offices
-os1 offices list
-os1 offices create --name "my-office"
-os1 offices status <officeId>
-os1 offices delete <officeId>
-
-# Agents
-os1 agents list --office <officeId>
-os1 agents hire --office <officeId> --name "aria" --model opus
-os1 agents get <officeId> aria
-os1 agents fire <officeId> aria
-os1 agents logs <officeId> aria
-
-# Raw API
-os1 api GET /api/v1/offices
 ```
 
 ## License

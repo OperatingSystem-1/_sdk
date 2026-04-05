@@ -6,16 +6,21 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from '
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
-
-import type { AuthConfig, ApiKeyAuth, TokenAuth } from '../types/index.js';
+import { execSync } from 'node:child_process';
 
 const program = new Command();
 const CONFIG_DIR = join(homedir(), '.os1');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+const DEFAULT_ENDPOINT = 'https://m.mitosislabs.ai';
+
+interface Config {
+  endpoint: string;
+  key: string;
+}
 
 program
-  .name('os1')
-  .description('OS-1 SDK — manage offices, agents, and integrations')
+  .name('mi')
+  .description('Mitosis One — manage offices, agents, and integrations')
   .version('0.1.0');
 
 function die(msg: string): never {
@@ -23,171 +28,105 @@ function die(msg: string): never {
   process.exit(1);
 }
 
-function ensureConfigDir(): void {
-  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-}
-
-function peekConfig(): { endpoint: string; auth: AuthConfig } | null {
+function peekConfig(): Config | null {
   if (!existsSync(CONFIG_FILE)) return null;
-  return JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'));
+  try {
+    return JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'));
+  } catch {
+    return null;
+  }
 }
 
-function loadConfig(): { endpoint: string; auth: AuthConfig } {
+function loadConfig(): Config {
   const config = peekConfig();
-  if (!config) die(`Not configured. Run 'os1 init' first.`);
+  if (!config) die(`Not logged in. Run 'mi login' first.`);
   return config;
 }
 
-function saveConfig(config: { endpoint: string; auth: AuthConfig }): void {
-  ensureConfigDir();
+function saveConfig(config: Config): void {
+  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
 }
 
 function getClient(): OS1Client {
   const config = loadConfig();
-  return new OS1Client({ endpoint: config.endpoint, auth: config.auth });
+  return new OS1Client({
+    endpoint: config.endpoint,
+    auth: { type: 'token', token: config.key },
+  });
 }
 
 function json(data: unknown): void {
   console.log(JSON.stringify(data, null, 2));
 }
 
-function apiKeyAuth(key: string, userId?: string): ApiKeyAuth {
-  return { type: 'apiKey', key: key.trim(), userId };
-}
-
-function tokenAuth(token: string): TokenAuth {
-  return { type: 'token', token };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function requestDeviceCode(endpoint: string): Promise<{
-  device_code: string;
-  user_code: string;
-  verification_uri: string;
-  expires_in: number;
-  interval?: number;
-}> {
-  const resp = await fetch(`${endpoint.replace(/\/$/, '')}/oauth/device`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!resp.ok) throw new Error(`Device flow failed (${resp.status})`);
-  return resp.json();
-}
-
-async function pollDeviceToken(endpoint: string, deviceCode: string, interval: number): Promise<string> {
-  const url = `${endpoint.replace(/\/$/, '')}/oauth/device/token`;
-  while (true) {
-    await sleep(interval * 1000);
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_code: deviceCode }),
+function prompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
     });
-    if (resp.status === 200) {
-      const payload = await resp.json();
-      return payload.access_token;
-    }
-    const err = await resp.json().catch(() => ({}));
-    const errorCode = (err as { error?: string }).error;
-    if (errorCode === 'authorization_pending') continue;
-    if (errorCode === 'slow_down') {
-      interval += 5;
-      continue;
-    }
-    throw new Error(
-      err?.error_description ??
-        err?.error ??
-        `Device token request failed with status ${resp.status}`,
-    );
+  });
+}
+
+function openBrowser(url: string): void {
+  try {
+    const cmd = process.platform === 'darwin' ? 'open' :
+                process.platform === 'win32' ? 'start' : 'xdg-open';
+    execSync(`${cmd} "${url}"`, { stdio: 'ignore' });
+  } catch {
+    // silent — user can open manually
   }
 }
 
-const DEFAULT_ENDPOINT = 'https://api.mitosislabs.ai';
+// ─── login ──────────────────────────────────────────────────────────────────
 
 program
-  .command('init')
-  .description('Configure the OS-1 SDK')
+  .command('login')
+  .description('Authenticate with your API key')
   .option('-e, --endpoint <url>', 'API endpoint', DEFAULT_ENDPOINT)
-  .option('-k, --key <apiKey>', 'API key')
-  .option('-u, --user <userId>', 'User ID')
   .action(async (opts) => {
-    let apiKey = opts.key;
-    if (!apiKey) {
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      apiKey = await new Promise<string>((resolve) => {
-        rl.question('API key: ', (answer) => {
-          rl.close();
-          resolve(answer.trim());
-        });
-      });
+    const settingsUrl = 'https://mitosislabs.ai/dashboard/settings';
+    console.log(`Get your API key from: ${settingsUrl}`);
+    openBrowser(settingsUrl);
+
+    const key = await prompt('\nPaste your API key: ');
+    if (!key) die('No key provided.');
+    if (!key.startsWith('mi_')) die('Invalid key format. Keys start with mi_');
+
+    const endpoint = opts.endpoint;
+    saveConfig({ endpoint, key });
+
+    // Verify it works
+    const client = new OS1Client({ endpoint, auth: { type: 'token', token: key } });
+    const ok = await client.health();
+    if (ok) {
+      console.log('Logged in.');
+    } else {
+      console.log('Key saved, but could not reach the API. Check your connection.');
     }
-    if (!apiKey) die('API key is required');
-
-    saveConfig({
-      endpoint: opts.endpoint,
-      auth: apiKeyAuth(apiKey, opts.user),
-    });
-
-    console.log(`Configured: ${opts.endpoint}`);
-  });
-
-const login = program.command('login').description('Manage saved credentials');
-
-login
-  .command('api-key')
-  .description('Store an API key')
-  .requiredOption('-k, --key <apiKey>', 'API key')
-  .option('-u, --user <userId>', 'User ID')
-  .action((opts) => {
-    const config = peekConfig();
-    if (!config) die("Run 'os1 init' first to set the endpoint.");
-    const defaultUserId = config.auth.type === 'apiKey' ? config.auth.userId : undefined;
-    saveConfig({
-      endpoint: config.endpoint,
-      auth: apiKeyAuth(opts.key, opts.user ?? defaultUserId),
-    });
-    console.log('API key saved.');
-  });
-
-login
-  .command('device')
-  .description('Authorize via OAuth device flow')
-  .option('-e, --endpoint <url>', 'API endpoint')
-  .action(async (opts) => {
-    const config = peekConfig();
-    const endpoint = opts.endpoint ?? config?.endpoint ?? DEFAULT_ENDPOINT;
-    const device = await requestDeviceCode(endpoint);
-    console.log('Open this URL in your browser and enter the code:');
-    console.log(`  ${device.verification_uri}`);
-    console.log(`Code: ${device.user_code}`);
-    console.log('Waiting for authorization...');
-    const token = await pollDeviceToken(endpoint, device.device_code, device.interval ?? 5);
-    saveConfig({ endpoint, auth: tokenAuth(token) });
-    console.log('Device authorization successful.');
   });
 
 program
   .command('logout')
-  .description('Forget stored credentials')
+  .description('Remove stored credentials')
   .action(() => {
     if (existsSync(CONFIG_FILE)) unlinkSync(CONFIG_FILE);
-    console.log('Credentials removed.');
+    console.log('Logged out.');
   });
 
 program
-  .command('auth-test')
-  .description('Verify authentication')
-  .action(async () => {
-    const client = getClient();
-    const ok = await client.health();
-    console.log(ok ? 'OK' : 'FAILED — cannot reach API');
-    process.exit(ok ? 0 : 1);
+  .command('whoami')
+  .description('Show current auth status')
+  .action(() => {
+    const config = peekConfig();
+    if (!config) die('Not logged in.');
+    console.log(`Endpoint: ${config.endpoint}`);
+    console.log(`Key:      ${config.key.slice(0, 11)}...`);
   });
+
+// ─── offices ────────────────────────────────────────────────────────────────
 
 const offices = program.command('offices').description('Office management');
 
@@ -207,6 +146,8 @@ offices.command('delete <officeId>').action(async (id) => {
   await getClient().offices.delete(id);
   console.log('Deleted');
 });
+
+// ─── agents ─────────────────────────────────────────────────────────────────
 
 const agents = program.command('agents').description('Agent management');
 
@@ -254,11 +195,15 @@ agents
     json(await getClient().agents.activity(officeId, name, { limit: parseInt(opts.limit, 10) }));
   });
 
+// ─── integrations ───────────────────────────────────────────────────────────
+
 const integ = program.command('integrations').description('Integration management');
 
 integ.command('models').requiredOption('-o, --office <id>', 'Office ID').action(async (opts) => {
   json(await getClient().integrations.listModels(opts.office));
 });
+
+// ─── raw API ────────────────────────────────────────────────────────────────
 
 program
   .command('api <method> <path>')
