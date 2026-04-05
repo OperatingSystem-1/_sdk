@@ -1,5 +1,5 @@
 {
-  "name": "@os1/sdk",
+  "name": "@mitosislabs/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for managing OS-1 offices, agents, and integrations",
   "main": "dist/index.js",
