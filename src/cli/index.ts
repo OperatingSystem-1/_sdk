@@ -83,29 +83,49 @@ function openBrowser(url: string): void {
 // ─── login ──────────────────────────────────────────────────────────────────
 
 program
-  .command('login')
-  .description('Authenticate with your API key')
+  .command('login [code]')
+  .description('Authenticate with an invite code or API key')
   .option('-e, --endpoint <url>', 'API endpoint', DEFAULT_ENDPOINT)
-  .action(async (opts) => {
-    const settingsUrl = 'https://mitosislabs.ai/dashboard/settings';
-    console.log(`Get your API key from: ${settingsUrl}`);
-    openBrowser(settingsUrl);
+  .action(async (code: string | undefined, opts: { endpoint: string }) => {
+    const endpoint = opts.endpoint;
 
-    const key = await prompt('\nPaste your API key: ');
-    if (!key) die('No key provided.');
+    let key: string;
+
+    if (code) {
+      // Invite code — exchange for API key
+      if (code.startsWith('mi_')) {
+        // It's already an API key
+        key = code;
+      } else {
+        // It's an invite code — claim it
+        const resp = await fetch(`${endpoint}/api/v1/auth/claim`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({})) as { error?: string };
+          die(err.error ?? `Invalid invite code (${resp.status})`);
+        }
+        const result = await resp.json() as { key: string; officeId?: string };
+        key = result.key;
+        if (result.officeId) {
+          console.log(`Office: ${result.officeId}`);
+        }
+      }
+    } else {
+      // Interactive — open browser and prompt
+      const settingsUrl = 'https://mitosislabs.ai/dashboard/settings';
+      console.log(`Get your API key from: ${settingsUrl}`);
+      openBrowser(settingsUrl);
+      key = await prompt('\nPaste your API key: ');
+      if (!key) die('No key provided.');
+    }
+
     if (!key.startsWith('mi_')) die('Invalid key format. Keys start with mi_');
 
-    const endpoint = opts.endpoint;
     saveConfig({ endpoint, key });
-
-    // Verify it works
-    const client = new OS1Client({ endpoint, auth: { type: 'token', token: key } });
-    const ok = await client.health();
-    if (ok) {
-      console.log('Logged in.');
-    } else {
-      console.log('Key saved, but could not reach the API. Check your connection.');
-    }
+    console.log('Logged in.');
   });
 
 program
