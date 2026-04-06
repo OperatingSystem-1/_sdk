@@ -3,6 +3,11 @@ import { Transport } from './transport.js';
 import { OfficesAPI } from './api/offices.js';
 import { AgentsAPI } from './api/agents.js';
 import { IntegrationsAPI } from './api/integrations.js';
+import { EnvAPI } from './api/env.js';
+import { TasksAPI } from './api/tasks.js';
+import { FilesAPI } from './api/files.js';
+import { InvitesAPI } from './api/invites.js';
+import { ChatAPI } from './api/chat.js';
 
 /**
  * OS-1 SDK client.
@@ -10,8 +15,8 @@ import { IntegrationsAPI } from './api/integrations.js';
  * @example
  * ```typescript
  * const client = new OS1Client({
- *   endpoint: 'https://api.mitosislabs.ai',
- *   apiKey: process.env.OS1_API_KEY,
+ *   endpoint: 'https://m.mitosislabs.ai',
+ *   auth: { type: 'token', token: process.env.OS1_API_KEY },
  * });
  *
  * const offices = await client.offices.list();
@@ -23,12 +28,22 @@ export class OS1Client {
   readonly offices: OfficesAPI;
   readonly agents: AgentsAPI;
   readonly integrations: IntegrationsAPI;
+  readonly env: EnvAPI;
+  readonly tasks: TasksAPI;
+  readonly files: FilesAPI;
+  readonly invites: InvitesAPI;
+  readonly chat: ChatAPI;
 
   constructor(config: ClientConfig) {
     this.transport = new Transport(config);
     this.offices = new OfficesAPI(this.transport);
     this.agents = new AgentsAPI(this.transport);
     this.integrations = new IntegrationsAPI(this.transport);
+    this.env = new EnvAPI(this.transport);
+    this.tasks = new TasksAPI(this.transport);
+    this.files = new FilesAPI(this.transport);
+    this.invites = new InvitesAPI(this.transport);
+    this.chat = new ChatAPI(this.transport);
   }
 
   /** Health check — verify connectivity. */

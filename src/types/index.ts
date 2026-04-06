@@ -125,6 +125,85 @@ export interface IntegrationSecret {
   updated_at?: string;
 }
 
+// ─── Environment Variables ──────────────────────────────────────────────────
+
+export interface EnvVar {
+  key: string;
+  value?: string;
+  scope?: 'office' | 'agent';
+  agentName?: string;
+}
+
+// ─── Tasks ──────────────────────────────────────────────────────────────────
+
+export interface CreateTaskRequest {
+  title: string;
+  description?: string;
+  priority?: number;
+  kind?: string;
+  requestedBy?: string;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  description?: string;
+  priority?: number;
+  kind?: string;
+  status: string;
+  claimedBy?: string;
+  requestedBy?: string;
+  createdAt: string;
+  updatedAt?: string;
+  completedAt?: string;
+}
+
+export interface TaskStats {
+  total: number;
+  pending: number;
+  claimed: number;
+  completed: number;
+  failed: number;
+}
+
+// ─── Files ──────────────────────────────────────────────────────────────────
+
+export interface FileInfo {
+  name: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface FileChanges {
+  events?: FileChangeEvent[];
+  serverTime?: number;
+  full_refresh?: boolean;
+}
+
+export interface FileChangeEvent {
+  type: 'created' | 'modified' | 'deleted';
+  name: string;
+  timestamp: number;
+}
+
+// ─── Chat ───────────────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  id: string;
+  from_agent: string;
+  to_agent: string;
+  body: string;
+  metadata?: Record<string, unknown> | null;
+  created_at: number;
+}
+
+export interface ChatConversation {
+  peerAddress: string;
+  agentName?: string;
+  lastMessage?: string;
+  lastMessageAt?: string;
+}
+
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
 export class OS1Error extends Error {

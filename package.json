@@ -1,7 +1,7 @@
 {
   "name": "@mitosislabs/sdk",
-  "version": "0.1.0",
-  "description": "TypeScript SDK for managing OS-1 offices, agents, and integrations",
+  "version": "0.2.0",
+  "description": "Mitosis One — persistent AI agents that remember, replicate, and coordinate",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -20,7 +20,13 @@
     "dist",
     "README.md"
   ],
-  "keywords": ["os1", "sdk", "offices", "agents", "integrations"],
+  "keywords": [
+    "os1",
+    "sdk",
+    "offices",
+    "agents",
+    "integrations"
+  ],
   "type": "module",
   "license": "MIT",
   "engines": {

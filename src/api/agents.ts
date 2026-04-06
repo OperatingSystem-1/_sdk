@@ -69,4 +69,19 @@ export class AgentsAPI {
   async presence(officeId: string, name: string): Promise<{ online: boolean; last_seen?: string }> {
     return this.transport.get(`${base(officeId)}/${name}/presence`);
   }
+
+  /** Get the last error for an agent. */
+  async lastError(officeId: string, name: string): Promise<{ error?: string; timestamp?: string }> {
+    return this.transport.get(`${base(officeId)}/${name}/last-error`);
+  }
+
+  /** Stop, start, or restart an agent pod. */
+  async lifecycle(officeId: string, name: string, action: 'stop' | 'start' | 'restart'): Promise<void> {
+    await this.transport.post(`${base(officeId)}/${name}/lifecycle`, { action });
+  }
+
+  /** Rotate agent credentials (signing key + IAM). */
+  async rotateCredentials(officeId: string, name: string): Promise<void> {
+    await this.transport.post(`${base(officeId)}/${name}/credentials/rotate`);
+  }
 }
