@@ -7,6 +7,12 @@ export interface ClientConfig {
   auth: AuthConfig;
   /** Request timeout in ms (default: 30000) */
   timeout?: number;
+  /**
+   * External agent API key — when set, sent as X-Agent-Api-Key header
+   * instead of normal auth. Set this for agents that joined via `mi join`
+   * (the raw key returned by the join endpoint).
+   */
+  agentKey?: string;
 }
 
 export type AuthConfig = ApiKeyAuth | TokenAuth;
@@ -202,6 +208,46 @@ export interface ChatConversation {
   agentName?: string;
   lastMessage?: string;
   lastMessageAt?: string;
+}
+
+// ─── External Agent (A2A) ───────────────────────────────────────────────────
+
+export interface JoinRequest {
+  code: string;
+  agent_name: string;
+  xmtp_address?: string;
+  public_key?: string;
+  capabilities?: string[];
+}
+
+export interface JoinResponse {
+  employee_id: string | null;
+  bot_id: string;
+  office_id: string;
+  api_key: string;
+  agent_name: string;
+  xmtp: {
+    office_group_id: string | null;
+    registered: boolean;
+  };
+}
+
+export interface CloneRequest {
+  code: string;
+  name?: string;
+}
+
+export interface CloneResponse {
+  clone_name: string;
+  clone_id: string;
+  office_id: string;
+  origin_name: string;
+  employee_id: string | null;
+  status: string;
+}
+
+export interface HeartbeatResponse {
+  ok: boolean;
 }
 
 // ─── Errors ──────────────────────────────────────────────────────────────────

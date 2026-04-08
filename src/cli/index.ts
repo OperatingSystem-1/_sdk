@@ -651,4 +651,119 @@ program
     jsonOut(await client.transport.request(method.toUpperCase(), path, { body }));
   });
 
+// ─── agent (external A2A) ───────────────────────────────────────────────────
+
+/** Build a client using agentKey auth (for external agents that joined via `mi agent join`). */
+function getAgentClient(): OS1Client {
+  const config = loadConfig();
+  return new OS1Client({
+    endpoint: config.endpoint,
+    auth: { type: 'token', token: config.key },
+    agentKey: config.key,
+  });
+}
+
+const agent = program.command('agent').description('External agent operations (A2A)');
+
+agent
+  .command('join <code>')
+  .description('Join an office as an external agent (no K8s pod)')
+  .option('-n, --name <name>', 'Agent name (required)')
+  .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
+  .action(async (code: string, opts: { name?: string; endpoint: string }) => {
+    if (!opts.name) die('Agent name required: mi agent join <CODE> -n <name>');
+    const endpoint = opts.endpoint;
+
+    const resp = await fetch(`${endpoint}/api/agents/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, agent_name: opts.name }),
+    });
+
+    if (!resp.ok) {
+      const err = (await resp.json().catch(() => ({}))) as { error?: string; message?: string };
+      die(err.message ?? err.error ?? `Join failed (${resp.status})`);
+    }
+
+    const result = (await resp.json()) as {
+      bot_id: string;
+      office_id: string;
+      api_key: string;
+      agent_name: string;
+      xmtp?: { office_group_id?: string; registered?: boolean };
+    };
+
+    saveConfig({
+      endpoint,
+      key: result.api_key,
+      officeId: result.office_id,
+      agentId: result.agent_name,
+    });
+
+    console.log(`✓ Joined office ${result.office_id} as "${result.agent_name}"`);
+    console.log(`  Bot ID: ${result.bot_id}`);
+    console.log(`  Config saved to ${CONFIG_FILE}`);
+    if (result.xmtp?.registered) {
+      console.log(`  XMTP: registered in office group`);
+    }
+    console.log(`\n  To stay visible on the dashboard, start the heartbeat daemon:`);
+    console.log(`    mi agent heartbeat start`);
+  });
+
+agent
+  .command('heartbeat')
+  .description('Send a single heartbeat')
+  .action(async () => {
+    const client = getAgentClient();
+    const result = await client.heartbeat.send();
+    if (result.ok) console.log('✓ Heartbeat sent');
+    else die('Heartbeat failed');
+  });
+
+agent
+  .command('heartbeat-daemon')
+  .description('Send heartbeats every 30s (keeps agent online)')
+  .option('-i, --interval <ms>', 'Interval in ms', '30000')
+  .action(async (opts: { interval: string }) => {
+    const client = getAgentClient();
+    const interval = parseInt(opts.interval, 10);
+    console.log(`Heartbeat daemon started (every ${interval / 1000}s). Ctrl+C to stop.`);
+    client.heartbeat.start(interval);
+    process.on('SIGINT', () => {
+      client.heartbeat.stop();
+      process.exit(0);
+    });
+    await new Promise(() => {});
+  });
+
+agent
+  .command('clone <code>')
+  .description('Clone yourself into another office as a full K8s pod')
+  .option('-n, --name <name>', 'Override clone name')
+  .option('-e, --endpoint <url>', 'Dashboard endpoint')
+  .action(async (code: string, opts: { name?: string; endpoint?: string }) => {
+    const config = loadConfig();
+    const endpoint = opts.endpoint || config.endpoint;
+    const client = new OS1Client({
+      endpoint,
+      auth: { type: 'token', token: config.key },
+      agentKey: config.key,
+    });
+
+    const result = await client.clone.clone({ code, name: opts.name });
+    console.log(`✓ Clone "${result.clone_name}" provisioning in office ${result.office_id}`);
+    console.log(`  Origin: ${result.origin_name}  →  Clone: ${result.clone_name}`);
+    console.log(`  Status: ${result.status} (K8s pod starting...)`);
+    console.log(`  Clone Bot ID: ${result.clone_id}`);
+  });
+
+agent
+  .command('self')
+  .description('Show current agent identity')
+  .action(async () => {
+    const client = getAgentClient();
+    const result = await client.transport.get<Record<string, unknown>>('/api/agents/self');
+    jsonOut(result);
+  });
+
 program.parse();

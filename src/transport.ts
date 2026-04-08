@@ -10,6 +10,10 @@ export class Transport {
   }
 
   private async authHeaders(): Promise<Record<string, string>> {
+    // External agent auth — raw API key via X-Agent-Api-Key header
+    if (this.config.agentKey) {
+      return { 'X-Agent-Api-Key': this.config.agentKey };
+    }
     const auth = this.config.auth;
     if (auth.type === 'apiKey') {
       return { Authorization: makeAuthHeader(auth.key, auth.userId) };
