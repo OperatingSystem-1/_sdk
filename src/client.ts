@@ -3,6 +3,10 @@ import { Transport } from './transport.js';
 import { OfficesAPI } from './api/offices.js';
 import { AgentsAPI } from './api/agents.js';
 import { IntegrationsAPI } from './api/integrations.js';
+import { JoinAPI } from './api/join.js';
+import { HeartbeatAPI } from './api/heartbeat.js';
+import { FilesAPI } from './api/files.js';
+import { CloneAPI } from './api/clone.js';
 
 /**
  * OS-1 SDK client.
@@ -23,12 +27,20 @@ export class OS1Client {
   readonly offices: OfficesAPI;
   readonly agents: AgentsAPI;
   readonly integrations: IntegrationsAPI;
+  readonly join: JoinAPI;
+  readonly heartbeat: HeartbeatAPI;
+  readonly files: FilesAPI;
+  readonly clone: CloneAPI;
 
   constructor(config: ClientConfig) {
     this.transport = new Transport(config);
     this.offices = new OfficesAPI(this.transport);
     this.agents = new AgentsAPI(this.transport);
     this.integrations = new IntegrationsAPI(this.transport);
+    this.join = new JoinAPI(this.transport);
+    this.heartbeat = new HeartbeatAPI(this.transport);
+    this.files = new FilesAPI(this.transport, config.apiKey);
+    this.clone = new CloneAPI(this.transport);
   }
 
   /** Health check — verify connectivity. */

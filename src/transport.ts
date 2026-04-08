@@ -10,6 +10,11 @@ export class Transport {
   }
 
   private authHeaders(): Record<string, string> {
+    // External agent mode: send the raw API key in a custom header
+    // instead of wrapping it in a JWT (which is for platform/user API calls)
+    if (this.config.agentKey) {
+      return { 'X-Agent-Api-Key': this.config.agentKey };
+    }
     return { Authorization: makeAuthHeader(this.config.apiKey, this.config.userId) };
   }
 
