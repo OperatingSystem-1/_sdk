@@ -24,6 +24,7 @@ interface Config {
   officeId?: string;
   agentId?: string;
   publicKey?: string;
+  privateKey?: string;
 }
 
 program
@@ -653,9 +654,18 @@ program
 
 // ─── agent (external A2A) ───────────────────────────────────────────────────
 
-/** Build a client using agentKey auth (for external agents that joined via `mi agent join`). */
+/** Build a client using pubkey signing or API key fallback. */
 function getAgentClient(): OS1Client {
   const config = loadConfig();
+  if (config.privateKey && config.agentId) {
+    return new OS1Client({
+      endpoint: config.endpoint,
+      auth: { type: 'token', token: config.key },
+      signingKey: config.privateKey,
+      agentId: config.agentId,
+    });
+  }
+  // Legacy fallback: raw API key
   return new OS1Client({
     endpoint: config.endpoint,
     auth: { type: 'token', token: config.key },
@@ -781,11 +791,20 @@ agent
 
     console.log(`\nConnecting to ${endpoint}...\n`);
 
+    // ── Step 0: Generate keypair ────────────────────────────────
+    const { getOrCreateKeypair } = await import('../auth/keys.js');
+    const kp = getOrCreateKeypair();
+    console.log(`✓ Identity: ${kp.address}`);
+
     // ── Step 1: Join ────────────────────────────────────────────
     const joinResp = await fetch(`${endpoint}/api/agents/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, agent_name: agentName }),
+      body: JSON.stringify({
+        code,
+        agent_name: agentName,
+        public_key: kp.publicKey,
+      }),
     });
 
     if (!joinResp.ok) {
@@ -806,18 +825,21 @@ agent
       key: join.api_key,
       officeId: join.office_id,
       agentId: join.agent_name,
+      publicKey: kp.publicKey,
+      privateKey: kp.privateKey,
     });
 
     console.log(`✓ Joined office ${join.office_id} as "${join.agent_name}"`);
     if (join.xmtp?.registered) {
-      console.log(`✓ XMTP: registered in office group chat`);
+      console.log(`✓ XMTP: registered in office group chat (${kp.address})`);
     }
 
     // ── Step 2: Heartbeat ───────────────────────────────────────
     const client = new OS1Client({
       endpoint,
       auth: { type: 'token', token: join.api_key },
-      agentKey: join.api_key,
+      signingKey: kp.privateKey,
+      agentId: join.agent_name,
     });
 
     client.heartbeat.start(30_000);
@@ -838,7 +860,7 @@ agent
       // Need a second invite code for clone — check if the same code works
       // or if we need to create one via the invites API
       try {
-        const cloneResult = await client.clone.clone({ code });
+        const cloneResult = await client.clone.clone({});
         console.log(`✓ Clone "${cloneResult.clone_name}" provisioning`);
 
         // Poll for clone status

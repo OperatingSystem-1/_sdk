@@ -11,8 +11,13 @@ export interface ClientConfig {
    * External agent API key — when set, sent as X-Agent-Api-Key header
    * instead of normal auth. Set this for agents that joined via `mi join`
    * (the raw key returned by the join endpoint).
+   * @deprecated Use signingKey + agentId for pubkey auth instead.
    */
   agentKey?: string;
+  /** secp256k1 private key hex — signs every request with ECDSA */
+  signingKey?: string;
+  /** Agent name — sent as X-Agent-Id header with signed requests */
+  agentId?: string;
 }
 
 export type AuthConfig = ApiKeyAuth | TokenAuth;
@@ -233,7 +238,8 @@ export interface JoinResponse {
 }
 
 export interface CloneRequest {
-  code: string;
+  /** Invite code for target office. If omitted, clones into current office. */
+  code?: string;
   name?: string;
 }
 

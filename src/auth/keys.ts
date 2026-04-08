@@ -1,4 +1,4 @@
-import { createECDH, createHash } from 'node:crypto';
+import { createECDH } from 'node:crypto';
 import {
   readFileSync,
   writeFileSync,
@@ -9,29 +9,30 @@ import {
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { keccak256 } from 'ethereum-cryptography/keccak';
 
 const KEY_DIR = join(homedir(), '.mi');
 const KEY_FILE = join(KEY_DIR, 'identity.json');
 
 export interface Keypair {
+  /** Uncompressed secp256k1 public key (130 hex chars, 04 prefix) */
   publicKey: string;
+  /** Hex-encoded 32-byte private key */
   privateKey: string;
+  /** Ethereum address derived via keccak256 (0x-prefixed, 42 chars) */
   address: string;
 }
 
-/** Generate a new secp256k1 keypair. */
+/** Generate a new secp256k1 keypair with Ethereum-compatible address. */
 export function generateKeypair(): Keypair {
   const ecdh = createECDH('secp256k1');
   ecdh.generateKeys();
-  const pub = ecdh.getPublicKey('hex', 'compressed');
+  const pub = ecdh.getPublicKey('hex', 'uncompressed'); // 130 hex, 04 prefix
   const priv = ecdh.getPrivateKey('hex');
-  // Derive address: first 20 bytes of SHA-256 of compressed public key
-  const addr =
-    '0x' +
-    createHash('sha256')
-      .update(Buffer.from(pub, 'hex'))
-      .digest('hex')
-      .slice(0, 40);
+  // Ethereum address: keccak256 of uncompressed pubkey (without 04 prefix), last 20 bytes
+  const pubBytes = Buffer.from(pub, 'hex').subarray(1); // strip 04 prefix
+  const hash = keccak256(pubBytes);
+  const addr = '0x' + Buffer.from(hash).subarray(-20).toString('hex');
   return { publicKey: pub, privateKey: priv, address: addr };
 }
 
