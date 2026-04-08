@@ -51,11 +51,11 @@ export class OS1Client {
     this.tasks = new TasksAPI(this.transport);
     this.files = new FilesAPI(this.transport);
     this.invites = new InvitesAPI(this.transport);
-    this.chat = new ChatAPI(this.transport);
+    this.chat = new ChatAPI(this.transport, config);
     this.clone = new CloneAPI(this.transport);
     this.join = new JoinAPI(this.transport);
     this.heartbeat = new HeartbeatAPI(this.transport);
-    this.messages = new MessageListener(this.transport);
+    this.messages = new MessageListener(this.transport, config);
   }
 
   /** Health check — verify connectivity. */

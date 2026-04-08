@@ -25,6 +25,7 @@ interface Config {
   agentId?: string;
   publicKey?: string;
   privateKey?: string;
+  xmtpGroupId?: string;
 }
 
 program
@@ -74,6 +75,18 @@ function getOfficeId(opts: { office?: string }): string {
 
 function jsonOut(data: unknown): void {
   console.log(JSON.stringify(data, null, 2));
+}
+
+function extractInviteCode(codeOrUrl: string): string {
+  if (!codeOrUrl.includes('/')) return codeOrUrl;
+  try {
+    const url = new URL(codeOrUrl);
+    const parts = url.pathname.split('/').filter(Boolean);
+    return parts[parts.length - 1] || codeOrUrl;
+  } catch {
+    const parts = codeOrUrl.split('/').filter(Boolean);
+    return parts[parts.length - 1] || codeOrUrl;
+  }
 }
 
 // ─── login ──────────────────────────────────────────────────────────────────
@@ -127,9 +140,7 @@ program
     const endpoint = opts.endpoint;
 
     // Extract code from URL: https://mitosislabs.ai/invite/ABCDEF → ABCDEF
-    const code = codeOrUrl.includes('/')
-      ? codeOrUrl.split('/').pop()!
-      : codeOrUrl;
+    const code = extractInviteCode(codeOrUrl);
 
     // Ensure keypair exists
     const { getOrCreateKeypair } = await import('../auth/keys.js');
@@ -201,6 +212,7 @@ program
     if (config.officeId) console.log(`Office:   ${config.officeId}`);
     if (config.agentId) console.log(`Agent:    ${config.agentId}`);
     if (config.publicKey) console.log(`PubKey:   ${config.publicKey.slice(0, 16)}...`);
+    if (config.xmtpGroupId) console.log(`XMTP:     ${config.xmtpGroupId}`);
   });
 
 // ─── offices ────────────────────────────────────────────────────────────────
@@ -552,49 +564,44 @@ program
 // ─── chat ───────────────────────────────────────────────────────────────────
 
 program
-  .command('chat [agentId]')
-  .description('Open live chat with a remote agent')
+  .command('chat [target]')
+  .description('Open direct XMTP chat or the saved office group chat')
   .option('-o, --office <id>', 'Office ID')
-  .action(async (agentId: string | undefined, opts: { office?: string }) => {
+  .action(async (target: string | undefined, opts: { office?: string }) => {
     const config = loadConfig();
     const officeId = opts.office || config.officeId;
     if (!officeId) die('No office. Run mi join first or pass --office.');
-    const peer = agentId || config.agentId;
-    if (!peer) die('Specify agent ID or run mi join first.');
-    const selfId = config.agentId || 'cli-user';
-
-    const client = getClient();
-
-    // Print existing history
-    let lastSeenTs = 0;
-    try {
-      const history = await client.chat.messages(officeId, selfId, peer, 20);
-      for (const msg of history) {
-        const who = msg.from_agent === selfId ? 'you' : msg.from_agent;
-        console.log(`[${who}] ${msg.body}`);
-      }
-      if (history.length) lastSeenTs = history[history.length - 1].created_at;
-    } catch {
-      /* no history yet */
+    if (!config.privateKey || !config.agentId) {
+      die('Public XMTP chat requires an onboarded agent identity. Run mi agent onboard first.');
     }
 
-    console.log(`\nChat with ${peer} (type /quit to exit)\n`);
+    const client = getAgentClient();
+    const peer = target || config.xmtpGroupId;
+    if (!peer) die('Specify an XMTP address or onboard into an office with a saved XMTP group.');
+    const usingGroup = !/^0x[a-fA-F0-9]{40}$/.test(peer);
 
-    // Poll for new messages
-    const pollInterval = setInterval(async () => {
-      try {
-        const msgs = await client.chat.messages(officeId, selfId, peer, 20);
-        const newMsgs = lastSeenTs
-          ? msgs.filter((m) => m.created_at > lastSeenTs && m.from_agent === peer)
-          : msgs.filter((m) => m.from_agent === peer);
-        for (const msg of newMsgs) {
-          process.stdout.write(`\r[${msg.from_agent}] ${msg.body}\n> `);
-        }
-        if (msgs.length) lastSeenTs = msgs[msgs.length - 1].created_at;
-      } catch {
-        /* agent may be unavailable */
-      }
-    }, 2000);
+    let activeConversationId = config.xmtpGroupId;
+    const history = usingGroup
+      ? await client.chat.groupMessages(peer, 20)
+      : await client.chat.directMessages(peer, 20);
+    for (const msg of history) {
+      const who = msg.from_agent === config.agentId ? 'you' : msg.from_agent;
+      console.log(`[${who}] ${msg.body}`);
+      activeConversationId = String(msg.metadata?.conversationId ?? activeConversationId ?? '');
+    }
+
+    const targetLabel = usingGroup ? `group ${peer}` : peer;
+    console.log(`\nChat on public XMTP with ${targetLabel} (type /quit to exit)\n`);
+
+    const listener = client.messages;
+    listener.on('message', (msg: any) => {
+      if (activeConversationId && msg.conversation_id !== activeConversationId) return;
+      if (msg.from_agent === config.agentId) return;
+      process.stdout.write(`\r[${msg.from_agent}] ${msg.body}\n> `);
+    });
+    listener.connect(officeId, config.agentId).catch((err) => {
+      console.error(`Listen failed: ${err.message || err}`);
+    });
 
     // Interactive readline
     const rl = createInterface({
@@ -614,14 +621,25 @@ program
         return;
       }
       try {
-        await client.chat.send(officeId, selfId, peer, text);
-      } catch (err) {
-        console.error(`Send failed: ${err}`);
+        if (usingGroup) {
+          const messageId = await client.chat.sendGroup(peer, text);
+          activeConversationId = activeConversationId || peer;
+          void messageId;
+        } else {
+          const messageId = await client.chat.sendDirect(peer, text);
+          if (!activeConversationId) {
+            const messages = await client.chat.directMessages(peer, 1);
+            activeConversationId = String(messages[0]?.metadata?.conversationId ?? '');
+          }
+          void messageId;
+        }
+      } catch (err: any) {
+        console.error(`Send failed: ${err.message || err}`);
       }
       rl.prompt();
     });
     rl.on('close', () => {
-      clearInterval(pollInterval);
+      listener.disconnect();
       process.exit(0);
     });
 
@@ -663,6 +681,8 @@ function getAgentClient(): OS1Client {
       auth: { type: 'token', token: config.key },
       signingKey: config.privateKey,
       agentId: config.agentId,
+      officeId: config.officeId,
+      xmtpGroupId: config.xmtpGroupId,
     });
   }
   // Legacy fallback: raw API key
@@ -676,18 +696,26 @@ function getAgentClient(): OS1Client {
 const agent = program.command('agent').description('External agent operations (A2A)');
 
 agent
-  .command('join <code>')
+  .command('join <codeOrUrl>')
   .description('Join an office as an external agent (no K8s pod)')
   .option('-n, --name <name>', 'Agent name (required)')
   .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
-  .action(async (code: string, opts: { name?: string; endpoint: string }) => {
+  .action(async (codeOrUrl: string, opts: { name?: string; endpoint: string }) => {
     if (!opts.name) die('Agent name required: mi agent join <CODE> -n <name>');
     const endpoint = opts.endpoint;
+    const code = extractInviteCode(codeOrUrl);
+    const { getOrCreateKeypair } = await import('../auth/keys.js');
+    const kp = getOrCreateKeypair();
 
     const resp = await fetch(`${endpoint}/api/agents/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, agent_name: opts.name }),
+      body: JSON.stringify({
+        code,
+        agent_name: opts.name,
+        public_key: kp.publicKey,
+        xmtp_address: kp.address,
+      }),
     });
 
     if (!resp.ok) {
@@ -708,6 +736,9 @@ agent
       key: result.api_key,
       officeId: result.office_id,
       agentId: result.agent_name,
+      publicKey: kp.publicKey,
+      privateKey: kp.privateKey,
+      xmtpGroupId: result.xmtp?.office_group_id,
     });
 
     console.log(`✓ Joined office ${result.office_id} as "${result.agent_name}"`);
@@ -752,13 +783,7 @@ agent
   .option('-n, --name <name>', 'Override clone name')
   .option('-e, --endpoint <url>', 'Dashboard endpoint')
   .action(async (code: string, opts: { name?: string; endpoint?: string }) => {
-    const config = loadConfig();
-    const endpoint = opts.endpoint || config.endpoint;
-    const client = new OS1Client({
-      endpoint,
-      auth: { type: 'token', token: config.key },
-      agentKey: config.key,
-    });
+    const client = getAgentClient();
 
     const result = await client.clone.clone({ code, name: opts.name });
     console.log(`✓ Clone "${result.clone_name}" provisioning in office ${result.office_id}`);
@@ -779,14 +804,15 @@ agent
 // ─── agent onboard (unified flow) ──────────────────────────────────────────
 
 agent
-  .command('onboard <code>')
+  .command('onboard <codeOrUrl>')
   .description('Full onboarding: join → heartbeat → clone → chat (one command)')
   .option('-n, --name <name>', 'Agent name (auto-detected if not set)')
   .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
   .option('--no-clone', 'Join only — skip cloning into a K8s pod')
   .option('--no-chat', 'Skip interactive chat after onboarding')
-  .action(async (code: string, opts: { name?: string; endpoint: string; clone: boolean; chat: boolean }) => {
+  .action(async (codeOrUrl: string, opts: { name?: string; endpoint: string; clone: boolean; chat: boolean }) => {
     const endpoint = opts.endpoint;
+    const code = extractInviteCode(codeOrUrl);
     const agentName = opts.name || `agent-${Date.now().toString(36)}`;
 
     console.log(`\nConnecting to ${endpoint}...\n`);
@@ -796,6 +822,18 @@ agent
     const kp = getOrCreateKeypair();
     console.log(`✓ Identity: ${kp.address}`);
 
+    // ── Step 0b: Initialize XMTP identity on the network ────────
+    // The agent must exist on the XMTP network before the office
+    // admin can add it to the group. Creating the client registers
+    // the signing key with the XMTP network.
+    try {
+      const { getXmtpClient } = await import('../xmtp/client.js');
+      await getXmtpClient({ signingKey: kp.privateKey } as any);
+      console.log(`✓ XMTP identity registered on network`);
+    } catch (err: any) {
+      console.log(`  ⚠ XMTP pre-init: ${err.message || err}`);
+    }
+
     // ── Step 1: Join ────────────────────────────────────────────
     const joinResp = await fetch(`${endpoint}/api/agents/join`, {
       method: 'POST',
@@ -804,6 +842,7 @@ agent
         code,
         agent_name: agentName,
         public_key: kp.publicKey,
+        xmtp_address: kp.address,
       }),
     });
 
@@ -827,6 +866,7 @@ agent
       agentId: join.agent_name,
       publicKey: kp.publicKey,
       privateKey: kp.privateKey,
+      xmtpGroupId: join.xmtp?.office_group_id,
     });
 
     console.log(`✓ Joined office ${join.office_id} as "${join.agent_name}"`);
@@ -840,17 +880,25 @@ agent
       auth: { type: 'token', token: join.api_key },
       signingKey: kp.privateKey,
       agentId: join.agent_name,
+      officeId: join.office_id,
+      xmtpGroupId: join.xmtp?.office_group_id,
     });
 
     client.heartbeat.start(30_000);
     console.log(`✓ Heartbeat daemon started (every 30s)`);
 
     // ── Step 3: Announce ────────────────────────────────────────
-    try {
-      await client.chat.send(join.office_id, join.agent_name, 'user',
-        `${join.agent_name} has joined the office.`);
-    } catch {
-      // Non-fatal — chat-server may not be ready yet
+    if (join.xmtp?.office_group_id) {
+      try {
+        await client.chat.sendGroup(
+          join.xmtp.office_group_id,
+          `${join.agent_name} has joined the office.`,
+        );
+      } catch (err: any) {
+        console.log(`  ⚠ XMTP announce skipped: ${err.message || err}`);
+      }
+    } else {
+      console.log('  ⚠ XMTP announce skipped: no office group ID returned');
     }
 
     // ── Step 4: Clone ───────────────────────────────────────────
@@ -888,9 +936,14 @@ agent
     if (opts.chat) {
       console.log(`\nListening for messages... (Ctrl+C to detach)\n`);
 
-      // Start message listener
-      const { MessageListener } = await import('../api/messages.js');
-      const listener = new MessageListener(client.transport);
+      if (!join.xmtp?.office_group_id) {
+        console.log('  ⚠ Interactive XMTP chat unavailable: no office group ID returned');
+        client.heartbeat.stop();
+        return;
+      }
+      const officeGroupId = join.xmtp.office_group_id;
+
+      const listener = client.messages;
 
       listener.on('message', (msg: any) => {
         const prefix = msg.group_name ? `[${msg.group_name}]` : `[DM]`;
@@ -898,24 +951,6 @@ agent
       });
 
       listener.connect(join.office_id, join.agent_name).catch(() => {});
-
-      // Fallback: poll XMTP conversations if SSE isn't available
-      let lastMsgTs = 0;
-      const pollMessages = async () => {
-        try {
-          const msgs = await client.chat.messages(join.office_id, join.agent_name, 'user', 10);
-          const newMsgs = msgs.filter(
-            (m: any) => m.created_at > lastMsgTs && m.from_agent !== join.agent_name,
-          );
-          for (const msg of newMsgs) {
-            process.stdout.write(`\r[${msg.from_agent}] ${msg.body}\n> `);
-          }
-          if (msgs.length) lastMsgTs = msgs[msgs.length - 1].created_at;
-        } catch {
-          /* chat-server may not be ready */
-        }
-      };
-      const pollInterval = setInterval(pollMessages, 3000);
 
       // Interactive readline
       const rl = createInterface({
@@ -929,14 +964,13 @@ agent
         if (!text) { rl.prompt(); return; }
         if (text === '/quit' || text === '/exit') { rl.close(); return; }
         try {
-          await client.chat.send(join.office_id, join.agent_name, 'user', text);
+          await client.chat.sendGroup(officeGroupId, text);
         } catch (err: any) {
           console.error(`Send failed: ${err.message || err}`);
         }
         rl.prompt();
       });
       rl.on('close', () => {
-        clearInterval(pollInterval);
         listener.disconnect();
         client.heartbeat.stop();
         console.log('\nDetached. Agent remains joined.');
