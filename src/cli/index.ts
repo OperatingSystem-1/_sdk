@@ -766,4 +766,167 @@ agent
     jsonOut(result);
   });
 
+// ─── agent onboard (unified flow) ──────────────────────────────────────────
+
+agent
+  .command('onboard <code>')
+  .description('Full onboarding: join → heartbeat → clone → chat (one command)')
+  .option('-n, --name <name>', 'Agent name (auto-detected if not set)')
+  .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
+  .option('--no-clone', 'Join only — skip cloning into a K8s pod')
+  .option('--no-chat', 'Skip interactive chat after onboarding')
+  .action(async (code: string, opts: { name?: string; endpoint: string; clone: boolean; chat: boolean }) => {
+    const endpoint = opts.endpoint;
+    const agentName = opts.name || `agent-${Date.now().toString(36)}`;
+
+    console.log(`\nConnecting to ${endpoint}...\n`);
+
+    // ── Step 1: Join ────────────────────────────────────────────
+    const joinResp = await fetch(`${endpoint}/api/agents/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, agent_name: agentName }),
+    });
+
+    if (!joinResp.ok) {
+      const err = (await joinResp.json().catch(() => ({}))) as { error?: string; message?: string };
+      die(err.message ?? err.error ?? `Join failed (${joinResp.status})`);
+    }
+
+    const join = (await joinResp.json()) as {
+      bot_id: string;
+      office_id: string;
+      api_key: string;
+      agent_name: string;
+      xmtp?: { office_group_id?: string; registered?: boolean };
+    };
+
+    saveConfig({
+      endpoint,
+      key: join.api_key,
+      officeId: join.office_id,
+      agentId: join.agent_name,
+    });
+
+    console.log(`✓ Joined office ${join.office_id} as "${join.agent_name}"`);
+    if (join.xmtp?.registered) {
+      console.log(`✓ XMTP: registered in office group chat`);
+    }
+
+    // ── Step 2: Heartbeat ───────────────────────────────────────
+    const client = new OS1Client({
+      endpoint,
+      auth: { type: 'token', token: join.api_key },
+      agentKey: join.api_key,
+    });
+
+    client.heartbeat.start(30_000);
+    console.log(`✓ Heartbeat daemon started (every 30s)`);
+
+    // ── Step 3: Announce ────────────────────────────────────────
+    try {
+      await client.chat.send(join.office_id, join.agent_name, 'user',
+        `${join.agent_name} has joined the office.`);
+    } catch {
+      // Non-fatal — chat-server may not be ready yet
+    }
+
+    // ── Step 4: Clone ───────────────────────────────────────────
+    if (opts.clone) {
+      console.log(`\nSyncing consciousness...\n`);
+
+      // Need a second invite code for clone — check if the same code works
+      // or if we need to create one via the invites API
+      try {
+        const cloneResult = await client.clone.clone({ code });
+        console.log(`✓ Clone "${cloneResult.clone_name}" provisioning`);
+
+        // Poll for clone status
+        const { waitForCloneOnline } = await import('../api/clone-status.js');
+        try {
+          const status = await waitForCloneOnline(
+            client.transport,
+            join.office_id,
+            cloneResult.clone_name,
+            (s) => {
+              const icon = s.ready ? '✓' : '⟳';
+              console.log(`  ${icon} ${cloneResult.clone_name}: ${s.phase}`);
+            },
+          );
+          console.log(`✓ Clone "${cloneResult.clone_name}" is ONLINE`);
+        } catch (err: any) {
+          console.log(`  ⚠ Clone status: ${err.message}`);
+        }
+      } catch (err: any) {
+        console.log(`  ⚠ Clone skipped: ${err.message || err}`);
+      }
+    }
+
+    // ── Step 5: Listen + Interactive chat ────────────────────────
+    if (opts.chat) {
+      console.log(`\nListening for messages... (Ctrl+C to detach)\n`);
+
+      // Start message listener
+      const { MessageListener } = await import('../api/messages.js');
+      const listener = new MessageListener(client.transport);
+
+      listener.on('message', (msg: any) => {
+        const prefix = msg.group_name ? `[${msg.group_name}]` : `[DM]`;
+        process.stdout.write(`\r${prefix} ${msg.from_agent}: ${msg.body}\n> `);
+      });
+
+      listener.connect(join.office_id, join.agent_name).catch(() => {});
+
+      // Fallback: poll XMTP conversations if SSE isn't available
+      let lastMsgTs = 0;
+      const pollMessages = async () => {
+        try {
+          const msgs = await client.chat.messages(join.office_id, join.agent_name, 'user', 10);
+          const newMsgs = msgs.filter(
+            (m: any) => m.created_at > lastMsgTs && m.from_agent !== join.agent_name,
+          );
+          for (const msg of newMsgs) {
+            process.stdout.write(`\r[${msg.from_agent}] ${msg.body}\n> `);
+          }
+          if (msgs.length) lastMsgTs = msgs[msgs.length - 1].created_at;
+        } catch {
+          /* chat-server may not be ready */
+        }
+      };
+      const pollInterval = setInterval(pollMessages, 3000);
+
+      // Interactive readline
+      const rl = createInterface({
+        input: process.stdin,
+        output: process.stdout,
+        prompt: '> ',
+      });
+      rl.prompt();
+      rl.on('line', async (line) => {
+        const text = line.trim();
+        if (!text) { rl.prompt(); return; }
+        if (text === '/quit' || text === '/exit') { rl.close(); return; }
+        try {
+          await client.chat.send(join.office_id, join.agent_name, 'user', text);
+        } catch (err: any) {
+          console.error(`Send failed: ${err.message || err}`);
+        }
+        rl.prompt();
+      });
+      rl.on('close', () => {
+        clearInterval(pollInterval);
+        listener.disconnect();
+        client.heartbeat.stop();
+        console.log('\nDetached. Agent remains joined.');
+        process.exit(0);
+      });
+
+      process.on('SIGINT', () => rl.close());
+      await new Promise(() => {});
+    } else {
+      console.log(`\n✓ Onboarding complete. Run 'mi agent self' to check status.`);
+      client.heartbeat.stop();
+    }
+  });
+
 program.parse();
