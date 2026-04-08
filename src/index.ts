@@ -7,5 +7,8 @@ export { TasksAPI } from './api/tasks.js';
 export { FilesAPI } from './api/files.js';
 export { InvitesAPI } from './api/invites.js';
 export { ChatAPI } from './api/chat.js';
+export { CloneAPI } from './api/clone.js';
+export { JoinAPI } from './api/join.js';
+export { HeartbeatAPI } from './api/heartbeat.js';
 export type * from './types/index.js';
 export { OS1Error } from './types/index.js';
