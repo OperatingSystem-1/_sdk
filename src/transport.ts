@@ -1,38 +1,47 @@
-import type { AuthConfig, ClientConfig } from './types/index.js';
+import type { ClientConfig } from './types/index.js';
 import { makeAuthHeader } from './auth/index.js';
 import { OS1Error } from './types/index.js';
 
+let _signRequest: typeof import('./auth/sign.js').signRequest | null = null;
+
 export class Transport {
+  readonly endpoint: string;
   private config: ClientConfig;
+  private staticHeaders: Record<string, string>;
+  private useSignature: boolean;
 
   constructor(config: ClientConfig) {
     this.config = config;
+    this.endpoint = config.endpoint;
+    this.useSignature = !!(config.signingKey && config.agentId);
+
+    // Pre-compute static auth headers once at construction.
+    // Only the pubkey signature varies per-request (timestamp + path).
+    this.staticHeaders = {};
+    if (config.agentKey) {
+      this.staticHeaders['X-Agent-Api-Key'] = config.agentKey;
+    } else if (config.auth.type === 'apiKey' && config.auth.key) {
+      this.staticHeaders['Authorization'] = makeAuthHeader(config.auth.key, config.auth.userId);
+    } else if (config.auth.type === 'token' && config.auth.token) {
+      this.staticHeaders['Authorization'] = `Bearer ${config.auth.token}`;
+    }
   }
 
   private async authHeaders(method: string, path: string): Promise<Record<string, string>> {
-    const headers: Record<string, string> = {};
-
-    // Pubkey signature auth — sign every request with the agent's private key.
-    // Office-manager endpoints verify these signatures.
-    if (this.config.signingKey && this.config.agentId) {
-      const { signRequest } = await import('./auth/sign.js');
-      Object.assign(headers, await signRequest(this.config.signingKey, this.config.agentId, method, path));
+    if (this.useSignature) {
+      if (!_signRequest) {
+        _signRequest = (await import('./auth/sign.js')).signRequest;
+      }
+      const signed = await _signRequest(this.config.signingKey!, this.config.agentId!, method, path);
+      return Object.keys(this.staticHeaders).length
+        ? { ...signed, ...this.staticHeaders }
+        : signed;
     }
 
-    // Also include the API key / Bearer token — dashboard endpoints
-    // (Next.js /api/agents/*) verify these instead of pubkey signatures.
-    if (this.config.agentKey) {
-      headers['X-Agent-Api-Key'] = this.config.agentKey;
-    } else if (this.config.auth.type === 'apiKey') {
-      headers['Authorization'] = makeAuthHeader(this.config.auth.key, this.config.auth.userId);
-    } else if (this.config.auth.type === 'token') {
-      headers['Authorization'] = `Bearer ${this.config.auth.token}`;
-    }
-
-    if (!Object.keys(headers).length) {
+    if (!Object.keys(this.staticHeaders).length) {
       throw new Error('Unsupported auth configuration');
     }
-    return headers;
+    return this.staticHeaders;
   }
 
   async request<T>(
@@ -75,21 +84,23 @@ export class Transport {
         signal: controller.signal,
       });
 
+      if (options?.raw) return response as unknown as T;
+
       if (!response.ok) {
         let message = response.statusText;
         let code: string | undefined;
         try {
-          const err = await response.json() as { message?: string; error?: string; code?: string };
-          message = err.message ?? err.error ?? message;
+          const err = (await response.json()) as { error?: string; message?: string; code?: string };
+          message = err.error || err.message || message;
           code = err.code;
-        } catch {}
+        } catch { /* non-JSON error body */ }
         throw new OS1Error(response.status, message, code);
       }
 
-      if (options?.raw) return response as unknown as T;
-
-      const contentType = response.headers.get('content-type') ?? '';
-      if (contentType.includes('application/json')) return (await response.json()) as T;
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        return (await response.json()) as T;
+      }
       return (await response.text()) as unknown as T;
     } finally {
       clearTimeout(timer);
@@ -114,9 +125,5 @@ export class Transport {
 
   delete<T>(path: string): Promise<T> {
     return this.request<T>('DELETE', path);
-  }
-
-  get endpoint(): string {
-    return this.config.endpoint;
   }
 }
