@@ -140,6 +140,32 @@ export interface IntegrationSecret {
   updated_at?: string;
 }
 
+export interface OfficeIntegration {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  category: 'llm' | 'communication' | 'services';
+  aliases: string[];
+  capabilities: string[];
+  wizard: 'interactive' | 'guide' | 'auto' | 'oauth';
+  guideFile: string | null;
+  officeLevel: boolean;
+  channels: string[];
+  agentEnvVars: string[];
+  requiredSecrets: Array<{
+    key: string;
+    label: string;
+    type: 'text' | 'password' | 'oauth';
+    required: boolean;
+    hint?: string;
+  }>;
+  verified: boolean;
+  status: 'pending' | 'configured' | 'active';
+  secretName: string | null;
+  metadata: Record<string, unknown>;
+}
+
 // ─── Environment Variables ──────────────────────────────────────────────────
 
 export interface EnvVar {

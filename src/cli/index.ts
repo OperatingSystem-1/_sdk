@@ -26,6 +26,7 @@ interface Config {
   publicKey?: string;
   privateKey?: string;
   xmtpGroupId?: string;
+  officeManagerUrl?: string;
 }
 
 program
@@ -63,6 +64,35 @@ function getClient(): OS1Client {
   return new OS1Client({
     endpoint: config.endpoint,
     auth: { type: 'token', token: config.key },
+  });
+}
+
+function getClientAt(endpoint: string): OS1Client {
+  const config = loadConfig();
+  return new OS1Client({
+    endpoint,
+    auth: { type: 'token', token: config.key },
+  });
+}
+
+function getAgentClientAt(endpoint: string): OS1Client {
+  const config = loadConfig();
+  if (config.privateKey && config.agentId) {
+    return new OS1Client({
+      endpoint,
+      // For office-manager pubkey auth, avoid sending a misleading Bearer token.
+      auth: { type: 'token', token: '' },
+      signingKey: config.privateKey,
+      agentId: config.agentId,
+      officeId: config.officeId,
+      xmtpGroupId: config.xmtpGroupId,
+    });
+  }
+  // Legacy fallback: raw API key
+  return new OS1Client({
+    endpoint,
+    auth: { type: 'token', token: config.key },
+    agentKey: config.key,
   });
 }
 
@@ -246,8 +276,10 @@ const agentCmd = program.command('agents').description('Agent management');
 agentCmd
   .command('list')
   .option('-o, --office <id>', 'Office ID')
-  .action(async (opts) => {
-    jsonOut(await getClient().agents.list(getOfficeId(opts)));
+  .option('-e, --endpoint <url>', 'Office-manager endpoint override (dev/prod)')
+  .action(async (opts: { office?: string; endpoint?: string }) => {
+    const endpoint = opts.endpoint || loadConfig().endpoint;
+    jsonOut(await getClientAt(endpoint).agents.list(getOfficeId(opts)));
   });
 
 agentCmd
@@ -256,9 +288,11 @@ agentCmd
   .requiredOption('-n, --name <name>', 'Agent name')
   .option('-r, --role <role>', 'Role')
   .option('-m, --model <tier>', 'Model tier (opus/sonnet/haiku)')
-  .action(async (opts) => {
+  .option('-e, --endpoint <url>', 'Office-manager endpoint override (dev/prod)')
+  .action(async (opts: { office?: string; name: string; role?: string; model?: string; endpoint?: string }) => {
+    const endpoint = opts.endpoint || loadConfig().endpoint;
     jsonOut(
-      await getClient().agents.hire(getOfficeId(opts), {
+      await getClientAt(endpoint).agents.hire(getOfficeId(opts), {
         name: opts.name,
         role: opts.role,
         modelTier: opts.model,
@@ -266,12 +300,20 @@ agentCmd
     );
   });
 
-agentCmd.command('get <name>').option('-o, --office <id>', 'Office ID').action(async (name, opts) => {
-  jsonOut(await getClient().agents.get(getOfficeId(opts), name));
+agentCmd.command('get <name>')
+  .option('-o, --office <id>', 'Office ID')
+  .option('-e, --endpoint <url>', 'Office-manager endpoint override (dev/prod)')
+  .action(async (name, opts: { office?: string; endpoint?: string }) => {
+    const endpoint = opts.endpoint || loadConfig().endpoint;
+    jsonOut(await getClientAt(endpoint).agents.get(getOfficeId(opts), name));
 });
 
-agentCmd.command('fire <name>').option('-o, --office <id>', 'Office ID').action(async (name, opts) => {
-  await getClient().agents.fire(getOfficeId(opts), name);
+agentCmd.command('fire <name>')
+  .option('-o, --office <id>', 'Office ID')
+  .option('-e, --endpoint <url>', 'Office-manager endpoint override (dev/prod)')
+  .action(async (name, opts: { office?: string; endpoint?: string }) => {
+    const endpoint = opts.endpoint || loadConfig().endpoint;
+    await getClientAt(endpoint).agents.fire(getOfficeId(opts), name);
   console.log(`Fired ${name}`);
 });
 
@@ -652,6 +694,15 @@ program
 const integ = program.command('integrations').description('Integration management');
 
 integ
+  .command('list')
+  .option('-o, --office <id>', 'Office ID')
+  .option('-e, --endpoint <url>', 'Dashboard endpoint (dev/prod override)')
+  .action(async (opts: { office?: string; endpoint?: string }) => {
+    const endpoint = opts.endpoint || loadConfig().endpoint;
+    jsonOut(await getClientAt(endpoint).integrations.listOffice(getOfficeId(opts)));
+  });
+
+integ
   .command('models')
   .option('-o, --office <id>', 'Office ID')
   .action(async (opts) => {
@@ -666,6 +717,20 @@ program
   .option('-d, --data <json>', 'Request body')
   .action(async (method, path, opts) => {
     const client = getClient();
+    const body = opts.data ? JSON.parse(opts.data) : undefined;
+    jsonOut(await client.transport.request(method.toUpperCase(), path, { body }));
+  });
+
+program
+  .command('office <method> <path>')
+  .description('Raw signed office-manager API call (secp256k1)')
+  .option('-e, --endpoint <url>', 'Office-manager endpoint override (dev/prod)')
+  .option('-d, --data <json>', 'Request body')
+  .action(async (method, path, opts) => {
+    const config = loadConfig();
+    const endpoint = opts.endpoint || config.officeManagerUrl;
+    if (!endpoint) die('No office-manager endpoint. Pass --endpoint or set officeManagerUrl in config.');
+    const client = getAgentClientAt(endpoint);
     const body = opts.data ? JSON.parse(opts.data) : undefined;
     jsonOut(await client.transport.request(method.toUpperCase(), path, { body }));
   });
@@ -912,18 +977,35 @@ agent
     client.heartbeat.start(30_000);
     console.log(`✓ Heartbeat daemon started (every 30s)`);
 
-    // ── Step 3: Announce ────────────────────────────────────────
-    if (join.xmtp?.office_group_id) {
-      try {
-        await client.chat.sendGroup(
-          join.xmtp.office_group_id,
-          `${join.agent_name} has joined the office.`,
-        );
-      } catch (err: any) {
-        console.log(`  ⚠ XMTP announce skipped: ${err.message || err}`);
+    // ── Step 3: Install XMTP channel on the agent's gateway ─────
+    //    The agent connects directly to the XMTP network using its
+    //    own keypair. After install + restart, the gateway handles
+    //    all XMTP messaging autonomously — the CLI is not involved.
+    console.log(`\nInstalling XMTP channel...`);
+    try {
+      const { installXmtpChannel } = await import('../agent/install-xmtp.js');
+      const installResult = await installXmtpChannel({
+        agentName: join.agent_name,
+        privateKey: kp.privateKey,
+        ethAddress: kp.address,
+        officeId: join.office_id,
+        xmtpGroupId: join.xmtp?.office_group_id || undefined,
+      });
+
+      if (installResult.success) {
+        console.log(`✓ XMTP channel installed (${kp.address})`);
+        if (installResult.gatewayRestarted) {
+          console.log(`✓ Gateway restarted — agent can now chat on XMTP`);
+        }
+      } else {
+        console.log(`  ⚠ XMTP install: ${installResult.error || 'partial'}`);
       }
-    } else {
-      console.log('  ⚠ XMTP announce skipped: no office group ID returned');
+      for (const w of installResult.warnings) {
+        console.log(`  ⚠ ${w}`);
+      }
+    } catch (err: any) {
+      console.log(`  ⚠ XMTP channel install failed: ${err.message || err}`);
+      console.log(`    Install the XMTP extension manually to enable chat.`);
     }
 
     // ── Step 4: Clone + Consciousness Transfer ──────────────────
