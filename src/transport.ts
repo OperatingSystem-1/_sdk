@@ -9,8 +9,13 @@ export class Transport {
     this.config = config;
   }
 
-  private async authHeaders(): Promise<Record<string, string>> {
-    // External agent auth — raw API key via X-Agent-Api-Key header
+  private async authHeaders(method: string, path: string): Promise<Record<string, string>> {
+    // Pubkey signature auth — sign every request with the agent's private key
+    if (this.config.signingKey && this.config.agentId) {
+      const { signRequest } = await import('./auth/sign.js');
+      return signRequest(this.config.signingKey, this.config.agentId, method, path);
+    }
+    // Legacy: raw API key
     if (this.config.agentKey) {
       return { 'X-Agent-Api-Key': this.config.agentKey };
     }
@@ -44,7 +49,7 @@ export class Transport {
     }
 
     const url = `${this.config.endpoint}${fullPath}`;
-    const headers: Record<string, string> = { ...(await this.authHeaders()) };
+    const headers: Record<string, string> = { ...(await this.authHeaders(method, fullPath)) };
 
     if (options?.body && !(options.body instanceof FormData)) {
       headers['Content-Type'] = 'application/json';

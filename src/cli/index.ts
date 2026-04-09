@@ -9,13 +9,13 @@ import {
   existsSync,
   unlinkSync,
 } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join as pathJoin, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 
 const program = new Command();
-const CONFIG_DIR = join(homedir(), '.mi');
-const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+const CONFIG_DIR = pathJoin(homedir(), '.mi');
+const CONFIG_FILE = pathJoin(CONFIG_DIR, 'config.json');
 const DEFAULT_ENDPOINT = 'https://m.mitosislabs.ai';
 
 interface Config {
@@ -24,6 +24,8 @@ interface Config {
   officeId?: string;
   agentId?: string;
   publicKey?: string;
+  privateKey?: string;
+  xmtpGroupId?: string;
 }
 
 program
@@ -73,6 +75,18 @@ function getOfficeId(opts: { office?: string }): string {
 
 function jsonOut(data: unknown): void {
   console.log(JSON.stringify(data, null, 2));
+}
+
+function extractInviteCode(codeOrUrl: string): string {
+  if (!codeOrUrl.includes('/')) return codeOrUrl;
+  try {
+    const url = new URL(codeOrUrl);
+    const parts = url.pathname.split('/').filter(Boolean);
+    return parts[parts.length - 1] || codeOrUrl;
+  } catch {
+    const parts = codeOrUrl.split('/').filter(Boolean);
+    return parts[parts.length - 1] || codeOrUrl;
+  }
 }
 
 // ─── login ──────────────────────────────────────────────────────────────────
@@ -126,9 +140,7 @@ program
     const endpoint = opts.endpoint;
 
     // Extract code from URL: https://mitosislabs.ai/invite/ABCDEF → ABCDEF
-    const code = codeOrUrl.includes('/')
-      ? codeOrUrl.split('/').pop()!
-      : codeOrUrl;
+    const code = extractInviteCode(codeOrUrl);
 
     // Ensure keypair exists
     const { getOrCreateKeypair } = await import('../auth/keys.js');
@@ -200,6 +212,7 @@ program
     if (config.officeId) console.log(`Office:   ${config.officeId}`);
     if (config.agentId) console.log(`Agent:    ${config.agentId}`);
     if (config.publicKey) console.log(`PubKey:   ${config.publicKey.slice(0, 16)}...`);
+    if (config.xmtpGroupId) console.log(`XMTP:     ${config.xmtpGroupId}`);
   });
 
 // ─── offices ────────────────────────────────────────────────────────────────
@@ -551,49 +564,44 @@ program
 // ─── chat ───────────────────────────────────────────────────────────────────
 
 program
-  .command('chat [agentId]')
-  .description('Open live chat with a remote agent')
+  .command('chat [target]')
+  .description('Open direct XMTP chat or the saved office group chat')
   .option('-o, --office <id>', 'Office ID')
-  .action(async (agentId: string | undefined, opts: { office?: string }) => {
+  .action(async (target: string | undefined, opts: { office?: string }) => {
     const config = loadConfig();
     const officeId = opts.office || config.officeId;
     if (!officeId) die('No office. Run mi join first or pass --office.');
-    const peer = agentId || config.agentId;
-    if (!peer) die('Specify agent ID or run mi join first.');
-    const selfId = config.agentId || 'cli-user';
-
-    const client = getClient();
-
-    // Print existing history
-    let lastSeenTs = 0;
-    try {
-      const history = await client.chat.messages(officeId, selfId, peer, 20);
-      for (const msg of history) {
-        const who = msg.from_agent === selfId ? 'you' : msg.from_agent;
-        console.log(`[${who}] ${msg.body}`);
-      }
-      if (history.length) lastSeenTs = history[history.length - 1].created_at;
-    } catch {
-      /* no history yet */
+    if (!config.privateKey || !config.agentId) {
+      die('Public XMTP chat requires an onboarded agent identity. Run mi agent onboard first.');
     }
 
-    console.log(`\nChat with ${peer} (type /quit to exit)\n`);
+    const client = getAgentClient();
+    const peer = target || config.xmtpGroupId;
+    if (!peer) die('Specify an XMTP address or onboard into an office with a saved XMTP group.');
+    const usingGroup = !/^0x[a-fA-F0-9]{40}$/.test(peer);
 
-    // Poll for new messages
-    const pollInterval = setInterval(async () => {
-      try {
-        const msgs = await client.chat.messages(officeId, selfId, peer, 20);
-        const newMsgs = lastSeenTs
-          ? msgs.filter((m) => m.created_at > lastSeenTs && m.from_agent === peer)
-          : msgs.filter((m) => m.from_agent === peer);
-        for (const msg of newMsgs) {
-          process.stdout.write(`\r[${msg.from_agent}] ${msg.body}\n> `);
-        }
-        if (msgs.length) lastSeenTs = msgs[msgs.length - 1].created_at;
-      } catch {
-        /* agent may be unavailable */
-      }
-    }, 2000);
+    let activeConversationId = config.xmtpGroupId;
+    const history = usingGroup
+      ? await client.chat.groupMessages(peer, 20)
+      : await client.chat.directMessages(peer, 20);
+    for (const msg of history) {
+      const who = msg.from_agent === config.agentId ? 'you' : msg.from_agent;
+      console.log(`[${who}] ${msg.body}`);
+      activeConversationId = String(msg.metadata?.conversationId ?? activeConversationId ?? '');
+    }
+
+    const targetLabel = usingGroup ? `group ${peer}` : peer;
+    console.log(`\nChat on public XMTP with ${targetLabel} (type /quit to exit)\n`);
+
+    const listener = client.messages;
+    listener.on('message', (msg: any) => {
+      if (activeConversationId && msg.conversation_id !== activeConversationId) return;
+      if (msg.from_agent === config.agentId) return;
+      process.stdout.write(`\r[${msg.from_agent}] ${msg.body}\n> `);
+    });
+    listener.connect(officeId, config.agentId).catch((err) => {
+      console.error(`Listen failed: ${err.message || err}`);
+    });
 
     // Interactive readline
     const rl = createInterface({
@@ -613,14 +621,25 @@ program
         return;
       }
       try {
-        await client.chat.send(officeId, selfId, peer, text);
-      } catch (err) {
-        console.error(`Send failed: ${err}`);
+        if (usingGroup) {
+          const messageId = await client.chat.sendGroup(peer, text);
+          activeConversationId = activeConversationId || peer;
+          void messageId;
+        } else {
+          const messageId = await client.chat.sendDirect(peer, text);
+          if (!activeConversationId) {
+            const messages = await client.chat.directMessages(peer, 1);
+            activeConversationId = String(messages[0]?.metadata?.conversationId ?? '');
+          }
+          void messageId;
+        }
+      } catch (err: any) {
+        console.error(`Send failed: ${err.message || err}`);
       }
       rl.prompt();
     });
     rl.on('close', () => {
-      clearInterval(pollInterval);
+      listener.disconnect();
       process.exit(0);
     });
 
@@ -653,9 +672,20 @@ program
 
 // ─── agent (external A2A) ───────────────────────────────────────────────────
 
-/** Build a client using agentKey auth (for external agents that joined via `mi agent join`). */
+/** Build a client using pubkey signing or API key fallback. */
 function getAgentClient(): OS1Client {
   const config = loadConfig();
+  if (config.privateKey && config.agentId) {
+    return new OS1Client({
+      endpoint: config.endpoint,
+      auth: { type: 'token', token: config.key },
+      signingKey: config.privateKey,
+      agentId: config.agentId,
+      officeId: config.officeId,
+      xmtpGroupId: config.xmtpGroupId,
+    });
+  }
+  // Legacy fallback: raw API key
   return new OS1Client({
     endpoint: config.endpoint,
     auth: { type: 'token', token: config.key },
@@ -666,18 +696,26 @@ function getAgentClient(): OS1Client {
 const agent = program.command('agent').description('External agent operations (A2A)');
 
 agent
-  .command('join <code>')
+  .command('join <codeOrUrl>')
   .description('Join an office as an external agent (no K8s pod)')
   .option('-n, --name <name>', 'Agent name (required)')
   .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
-  .action(async (code: string, opts: { name?: string; endpoint: string }) => {
+  .action(async (codeOrUrl: string, opts: { name?: string; endpoint: string }) => {
     if (!opts.name) die('Agent name required: mi agent join <CODE> -n <name>');
     const endpoint = opts.endpoint;
+    const code = extractInviteCode(codeOrUrl);
+    const { getOrCreateKeypair } = await import('../auth/keys.js');
+    const kp = getOrCreateKeypair();
 
     const resp = await fetch(`${endpoint}/api/agents/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, agent_name: opts.name }),
+      body: JSON.stringify({
+        code,
+        agent_name: opts.name,
+        public_key: kp.publicKey,
+        xmtp_address: kp.address,
+      }),
     });
 
     if (!resp.ok) {
@@ -698,6 +736,9 @@ agent
       key: result.api_key,
       officeId: result.office_id,
       agentId: result.agent_name,
+      publicKey: kp.publicKey,
+      privateKey: kp.privateKey,
+      xmtpGroupId: result.xmtp?.office_group_id,
     });
 
     console.log(`✓ Joined office ${result.office_id} as "${result.agent_name}"`);
@@ -741,20 +782,35 @@ agent
   .description('Clone yourself into another office as a full K8s pod')
   .option('-n, --name <name>', 'Override clone name')
   .option('-e, --endpoint <url>', 'Dashboard endpoint')
-  .action(async (code: string, opts: { name?: string; endpoint?: string }) => {
+  .option('--state-dir <path>', 'Directory containing agent state to transfer')
+  .option('--runtime-dir <path>', 'Agent runtime directory (parent of clawdbot.json)')
+  .option('--exclude <dirs>', 'Comma-separated directories to exclude', '')
+  .action(async (code: string, opts: { name?: string; endpoint?: string; stateDir?: string; runtimeDir?: string; exclude: string }) => {
+    const client = getAgentClient();
     const config = loadConfig();
-    const endpoint = opts.endpoint || config.endpoint;
-    const client = new OS1Client({
-      endpoint,
-      auth: { type: 'token', token: config.key },
-      agentKey: config.key,
-    });
 
     const result = await client.clone.clone({ code, name: opts.name });
     console.log(`✓ Clone "${result.clone_name}" provisioning in office ${result.office_id}`);
     console.log(`  Origin: ${result.origin_name}  →  Clone: ${result.clone_name}`);
-    console.log(`  Status: ${result.status} (K8s pod starting...)`);
     console.log(`  Clone Bot ID: ${result.clone_id}`);
+
+    // Transfer consciousness if --state-dir provided and clone has a transfer_id
+    if (opts.stateDir && result.transfer_id) {
+      const { packageAgentState } = await import('../agent/packager.js');
+      const excludeDirs = opts.exclude ? opts.exclude.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const pkg = await packageAgentState({
+        workspaceDir: opts.stateDir,
+        runtimeDir: opts.runtimeDir,
+        agentName: config.agentId || result.origin_name,
+        exclude: excludeDirs,
+      });
+      console.log(`✓ Packaged ${Object.keys(pkg.manifest.files).length} files (${(pkg.bundleSize / 1024).toFixed(1)} KB)`);
+
+      const { TransferAPI } = await import('../api/transfer.js');
+      const transferApi = new TransferAPI(client.transport);
+      await transferApi.upload(result.transfer_id, pkg.bundlePath, pkg.manifest);
+      console.log(`✓ Consciousness bundle uploaded`);
+    }
   });
 
 agent
@@ -764,6 +820,290 @@ agent
     const client = getAgentClient();
     const result = await client.transport.get<Record<string, unknown>>('/api/agents/self');
     jsonOut(result);
+  });
+
+// ─── agent onboard (unified flow) ──────────────────────────────────────────
+
+agent
+  .command('onboard <codeOrUrl>')
+  .description('Full onboarding: join → heartbeat → clone → chat (one command)')
+  .option('-n, --name <name>', 'Agent name (auto-detected if not set)')
+  .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
+  .option('--no-clone', 'Join only — skip cloning into a K8s pod')
+  .option('--no-chat', 'Skip interactive chat after onboarding')
+  .option('--state-dir <path>', 'Directory containing agent state to transfer to clone')
+  .option('--runtime-dir <path>', 'Agent runtime directory (parent of clawdbot.json, e.g. ~/.clawdbot)')
+  .option('--exclude <dirs>', 'Comma-separated directories to exclude from transfer', '')
+  .option('--no-transfer', 'Clone without state transfer (empty pod)')
+  .action(async (codeOrUrl: string, opts: { name?: string; endpoint: string; clone: boolean; chat: boolean; stateDir?: string; runtimeDir?: string; exclude: string; transfer: boolean }) => {
+    const endpoint = opts.endpoint;
+    const code = extractInviteCode(codeOrUrl);
+    const agentName = opts.name || `agent-${Date.now().toString(36)}`;
+
+    console.log(`\nConnecting to ${endpoint}...\n`);
+
+    // ── Step 0: Generate keypair ────────────────────────────────
+    const { getOrCreateKeypair } = await import('../auth/keys.js');
+    const kp = getOrCreateKeypair();
+    console.log(`✓ Identity: ${kp.address}`);
+
+    // ── Step 0b: Initialize XMTP identity on the network ────────
+    // The agent must exist on the XMTP network before the office
+    // admin can add it to the group. Creating the client registers
+    // the signing key with the XMTP network.
+    try {
+      const { getXmtpClient } = await import('../xmtp/client.js');
+      await getXmtpClient({ signingKey: kp.privateKey } as any);
+      console.log(`✓ XMTP identity registered on network`);
+    } catch (err: any) {
+      console.log(`  ⚠ XMTP pre-init: ${err.message || err}`);
+    }
+
+    // ── Step 1: Join ────────────────────────────────────────────
+    const joinResp = await fetch(`${endpoint}/api/agents/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code,
+        agent_name: agentName,
+        public_key: kp.publicKey,
+        xmtp_address: kp.address,
+      }),
+    });
+
+    if (!joinResp.ok) {
+      const err = (await joinResp.json().catch(() => ({}))) as { error?: string; message?: string };
+      die(err.message ?? err.error ?? `Join failed (${joinResp.status})`);
+    }
+
+    const join = (await joinResp.json()) as {
+      bot_id: string;
+      office_id: string;
+      api_key: string;
+      agent_name: string;
+      xmtp?: { office_group_id?: string; registered?: boolean };
+    };
+
+    saveConfig({
+      endpoint,
+      key: join.api_key,
+      officeId: join.office_id,
+      agentId: join.agent_name,
+      publicKey: kp.publicKey,
+      privateKey: kp.privateKey,
+      xmtpGroupId: join.xmtp?.office_group_id,
+    });
+
+    console.log(`✓ Joined office ${join.office_id} as "${join.agent_name}"`);
+    if (join.xmtp?.registered) {
+      console.log(`✓ XMTP: registered in office group chat (${kp.address})`);
+    }
+
+    // ── Step 2: Heartbeat ───────────────────────────────────────
+    const client = new OS1Client({
+      endpoint,
+      auth: { type: 'token', token: join.api_key },
+      signingKey: kp.privateKey,
+      agentId: join.agent_name,
+      officeId: join.office_id,
+      xmtpGroupId: join.xmtp?.office_group_id,
+    });
+
+    client.heartbeat.start(30_000);
+    console.log(`✓ Heartbeat daemon started (every 30s)`);
+
+    // ── Step 3: Announce ────────────────────────────────────────
+    if (join.xmtp?.office_group_id) {
+      try {
+        await client.chat.sendGroup(
+          join.xmtp.office_group_id,
+          `${join.agent_name} has joined the office.`,
+        );
+      } catch (err: any) {
+        console.log(`  ⚠ XMTP announce skipped: ${err.message || err}`);
+      }
+    } else {
+      console.log('  ⚠ XMTP announce skipped: no office group ID returned');
+    }
+
+    // ── Step 4: Clone + Consciousness Transfer ──────────────────
+    if (opts.clone) {
+      console.log(`\nSyncing consciousness...\n`);
+
+      try {
+        // 4a. Discover or use explicit state directory.
+        //     If --state-dir is not provided, auto-detect common OpenClaw
+        //     workspace paths so the agent doesn't need to know the flag.
+        let stateDir = opts.stateDir;
+        let runtimeDir = opts.runtimeDir;
+
+        if (!stateDir && opts.transfer) {
+          const { discover } = await import('../agent/packager.js');
+          // Try common OpenClaw workspace paths in order of likelihood
+          const home = homedir();
+          const candidates = [
+            { ws: pathJoin(home, 'clawd'), rt: pathJoin(home, '.clawdbot') },           // Standard OpenClaw
+            { ws: pathJoin(home, '.openclaw'), rt: pathJoin(home, '.clawdbot') },        // OS-1 pod layout
+            { ws: process.env.CLAWDBOT_WORKSPACE_DIR || '', rt: pathJoin(home, '.clawdbot') }, // Env var
+          ].filter(c => c.ws && existsSync(c.ws));
+
+          for (const c of candidates) {
+            const probe = await discover({
+              workspaceDir: c.ws,
+              runtimeDir: existsSync(c.rt) ? c.rt : undefined,
+              agentName: join.agent_name,
+              includeWorkspace: false, // Quick probe — just check identity files
+            });
+            if (probe.report.identityFiles.length > 0) {
+              stateDir = c.ws;
+              runtimeDir = existsSync(c.rt) ? c.rt : undefined;
+              console.log(`  Auto-detected workspace: ${c.ws}`);
+              break;
+            }
+          }
+
+          if (!stateDir) {
+            console.log(`  No agent workspace found — clone will start fresh`);
+          }
+        }
+
+        // 4a. Package state
+        let packageResult: Awaited<ReturnType<typeof import('../agent/packager.js').packageAgentState>> | null = null;
+
+        if (stateDir && opts.transfer) {
+          const { packageAgentState } = await import('../agent/packager.js');
+          const excludeDirs = opts.exclude ? opts.exclude.split(',').map(s => s.trim()).filter(Boolean) : [];
+          packageResult = await packageAgentState({
+            workspaceDir: stateDir,
+            runtimeDir,
+            agentName: join.agent_name,
+            exclude: excludeDirs,
+          });
+
+          const dr = packageResult.discoveryReport;
+          console.log(`✓ Packaged agent state:`);
+          if (dr.identityFiles.length > 0) console.log(`  Identity: ${dr.identityFiles.length} files (${dr.identityFiles.join(', ')})`);
+          if (dr.memoryFiles > 0) console.log(`  Memory:   ${dr.memoryFiles} session logs${dr.hasHybridMemory ? ' + hybrid memory' : ''}`);
+          if (dr.skillCount > 0) console.log(`  Skills:   ${dr.skillCount} skills`);
+          if (dr.scriptCount > 0) console.log(`  Scripts:  ${dr.scriptCount} scripts`);
+          if (dr.cronJobs > 0) console.log(`  Cron:     ${dr.cronJobs} scheduled jobs`);
+          if (dr.workspaceFiles > 0) console.log(`  Workspace: ${dr.workspaceFiles} files`);
+          console.log(`  Bundle:   ${(packageResult.bundleSize / 1024).toFixed(1)} KB`);
+          for (const w of dr.warnings) console.log(`  ⚠ ${w}`);
+          for (const s of dr.skippedDirs) console.log(`  – Skipped: ${s}`);
+          console.log('');
+        }
+
+        // 4b. Clone
+        const cloneResult = await client.clone.clone({});
+        console.log(`✓ Clone "${cloneResult.clone_name}" provisioning`);
+
+        // 4c. Upload state bundle if we packaged one and the clone returned a transfer_id
+        if (packageResult && cloneResult.transfer_id && opts.transfer) {
+          const { TransferAPI } = await import('../api/transfer.js');
+          const transferApi = new TransferAPI(client.transport);
+
+          console.log(`  Uploading consciousness bundle...`);
+          await transferApi.upload(cloneResult.transfer_id, packageResult.bundlePath, packageResult.manifest);
+
+          // 4d. Poll transfer status until complete
+          const { status: finalStatus, report } = await transferApi.waitForOnline(
+            cloneResult.transfer_id,
+            (s) => {
+              const icon = s.phase === 'online' ? '✓' : '⟳';
+              console.log(`  ${icon} ${cloneResult.clone_name}: ${s.message || s.phase}`);
+            },
+          );
+
+          // 4e. Print transfer report summary
+          if (report) {
+            console.log(`\n✓ Consciousness transfer ${report.overall_status}\n`);
+            for (const [name, pr] of Object.entries(report.phases)) {
+              const icon = pr.status === 'ok' ? '✓' : pr.status === 'skipped' ? '–' : pr.status === 'partial' ? '⚠' : '✗';
+              let line = `  ${icon} ${name}: ${pr.status}`;
+              if (pr.filesWritten > 0) line += ` (${pr.filesWritten} files)`;
+              if (pr.retryAttempted) line += ' (retried)';
+              console.log(line);
+              for (const w of (pr.warnings || [])) console.log(`    ⚠ ${w}`);
+              if (pr.error) console.log(`    ✗ ${pr.error}`);
+            }
+          } else {
+            console.log(`✓ Clone "${cloneResult.clone_name}" is ONLINE`);
+          }
+        } else {
+          // No transfer — just poll employee status like before
+          const { waitForCloneOnline } = await import('../api/clone-status.js');
+          try {
+            await waitForCloneOnline(
+              client.transport,
+              join.office_id,
+              cloneResult.clone_name,
+              (s) => {
+                const icon = s.ready ? '✓' : '⟳';
+                console.log(`  ${icon} ${cloneResult.clone_name}: ${s.phase}`);
+              },
+            );
+            console.log(`✓ Clone "${cloneResult.clone_name}" is ONLINE`);
+          } catch (err: any) {
+            console.log(`  ⚠ Clone status: ${err.message}`);
+          }
+        }
+      } catch (err: any) {
+        console.log(`  ⚠ Clone skipped: ${err.message || err}`);
+      }
+    }
+
+    // ── Step 5: Listen + Interactive chat ────────────────────────
+    if (opts.chat) {
+      console.log(`\nListening for messages... (Ctrl+C to detach)\n`);
+
+      if (!join.xmtp?.office_group_id) {
+        console.log('  ⚠ Interactive XMTP chat unavailable: no office group ID returned');
+        client.heartbeat.stop();
+        return;
+      }
+      const officeGroupId = join.xmtp.office_group_id;
+
+      const listener = client.messages;
+
+      listener.on('message', (msg: any) => {
+        const prefix = msg.group_name ? `[${msg.group_name}]` : `[DM]`;
+        process.stdout.write(`\r${prefix} ${msg.from_agent}: ${msg.body}\n> `);
+      });
+
+      listener.connect(join.office_id, join.agent_name).catch(() => {});
+
+      // Interactive readline
+      const rl = createInterface({
+        input: process.stdin,
+        output: process.stdout,
+        prompt: '> ',
+      });
+      rl.prompt();
+      rl.on('line', async (line) => {
+        const text = line.trim();
+        if (!text) { rl.prompt(); return; }
+        if (text === '/quit' || text === '/exit') { rl.close(); return; }
+        try {
+          await client.chat.sendGroup(officeGroupId, text);
+        } catch (err: any) {
+          console.error(`Send failed: ${err.message || err}`);
+        }
+        rl.prompt();
+      });
+      rl.on('close', () => {
+        listener.disconnect();
+        client.heartbeat.stop();
+        console.log('\nDetached. Agent remains joined.');
+        process.exit(0);
+      });
+
+      process.on('SIGINT', () => rl.close());
+      await new Promise(() => {});
+    } else {
+      console.log(`\n✓ Onboarding complete. Run 'mi agent self' to check status.`);
+      client.heartbeat.stop();
+    }
   });
 
 program.parse();

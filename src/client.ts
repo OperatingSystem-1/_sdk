@@ -11,6 +11,7 @@ import { ChatAPI } from './api/chat.js';
 import { CloneAPI } from './api/clone.js';
 import { JoinAPI } from './api/join.js';
 import { HeartbeatAPI } from './api/heartbeat.js';
+import { MessageListener } from './api/messages.js';
 
 /**
  * OS-1 SDK client.
@@ -39,6 +40,7 @@ export class OS1Client {
   readonly clone: CloneAPI;
   readonly join: JoinAPI;
   readonly heartbeat: HeartbeatAPI;
+  readonly messages: MessageListener;
 
   constructor(config: ClientConfig) {
     this.transport = new Transport(config);
@@ -49,10 +51,11 @@ export class OS1Client {
     this.tasks = new TasksAPI(this.transport);
     this.files = new FilesAPI(this.transport);
     this.invites = new InvitesAPI(this.transport);
-    this.chat = new ChatAPI(this.transport);
+    this.chat = new ChatAPI(this.transport, config);
     this.clone = new CloneAPI(this.transport);
     this.join = new JoinAPI(this.transport);
     this.heartbeat = new HeartbeatAPI(this.transport);
+    this.messages = new MessageListener(this.transport, config);
   }
 
   /** Health check — verify connectivity. */

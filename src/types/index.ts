@@ -11,8 +11,17 @@ export interface ClientConfig {
    * External agent API key — when set, sent as X-Agent-Api-Key header
    * instead of normal auth. Set this for agents that joined via `mi join`
    * (the raw key returned by the join endpoint).
+   * @deprecated Use signingKey + agentId for pubkey auth instead.
    */
   agentKey?: string;
+  /** secp256k1 private key hex — signs every request with ECDSA */
+  signingKey?: string;
+  /** Agent name — sent as X-Agent-Id header with signed requests */
+  agentId?: string;
+  /** Current office id for office-scoped APIs and bridge-backed office group chat */
+  officeId?: string;
+  /** Office XMTP group conversation ID for public network chat */
+  xmtpGroupId?: string;
 }
 
 export type AuthConfig = ApiKeyAuth | TokenAuth;
@@ -204,8 +213,10 @@ export interface ChatMessage {
 }
 
 export interface ChatConversation {
+  conversationId: string;
   peerAddress: string;
   agentName?: string;
+  groupName?: string;
   lastMessage?: string;
   lastMessageAt?: string;
 }
@@ -233,7 +244,8 @@ export interface JoinResponse {
 }
 
 export interface CloneRequest {
-  code: string;
+  /** Invite code for target office. If omitted, clones into current office. */
+  code?: string;
   name?: string;
 }
 
@@ -244,10 +256,105 @@ export interface CloneResponse {
   origin_name: string;
   employee_id: string | null;
   status: string;
+  transfer_id?: string;
+  upload_url?: string;
 }
 
 export interface HeartbeatResponse {
   ok: boolean;
+}
+
+// ─── Consciousness Transfer ─────────────────────────────────────────────────
+
+export interface ManifestFileEntry {
+  sha256: string;
+  size: number;
+}
+
+export interface ManifestStats {
+  identity_files: number;
+  memory_sessions: number;
+  memory_has_hybrid: boolean;
+  skill_count: number;
+  script_count: number;
+  cron_jobs: number;
+  task_count: number;
+  agent_messages: number;
+  workspace_files: number;
+  bundle_size_bytes: number;
+  skipped_dirs: string[];
+  model_primary: string | null;
+}
+
+export interface Manifest {
+  version: '1.0';
+  agent_name: string;
+  origin: string;
+  packed_at: string;
+  files: Record<string, ManifestFileEntry>;
+  stats: ManifestStats;
+}
+
+export interface DiscoveryReport {
+  identityFiles: string[];
+  memoryFiles: number;
+  hasHybridMemory: boolean;
+  skillCount: number;
+  scriptCount: number;
+  cronJobs: number;
+  workspaceFiles: number;
+  taskCount: number;
+  agentMessages: number;
+  skippedDirs: string[];
+  warnings: string[];
+}
+
+export interface PackageResult {
+  manifest: Manifest;
+  bundlePath: string;
+  bundleSize: number;
+  discoveryReport: DiscoveryReport;
+}
+
+export interface PhaseResult {
+  phase: string;
+  status: 'ok' | 'partial' | 'failed' | 'skipped';
+  filesWritten: number;
+  filesFailed: string[];
+  warnings: string[];
+  error: string | null;
+  retryAttempted: boolean;
+  durationMs: number;
+}
+
+export interface TransferReport {
+  transfer_id: string;
+  origin_agent: string;
+  clone_name: string;
+  office_id: string;
+  started_at: string;
+  completed_at: string;
+  duration_ms: number;
+  overall_status: 'completed' | 'completed_with_warnings' | 'partial' | 'failed';
+  phases: Record<string, PhaseResult>;
+  summary: {
+    files_transferred: number;
+    files_failed: number;
+    memory_entries: number;
+    personality_transferred: boolean;
+    provider_preserved: boolean;
+    warnings: string[];
+    errors: string[];
+  };
+}
+
+export interface TransferStatus {
+  transfer_id: string;
+  phase: string;
+  progress: number;
+  message: string;
+  error?: string;
+  report?: TransferReport;
 }
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
