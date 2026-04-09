@@ -9,13 +9,13 @@ import {
   existsSync,
   unlinkSync,
 } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join as pathJoin, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 
 const program = new Command();
-const CONFIG_DIR = join(homedir(), '.mi');
-const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+const CONFIG_DIR = pathJoin(homedir(), '.mi');
+const CONFIG_FILE = pathJoin(CONFIG_DIR, 'config.json');
 const DEFAULT_ENDPOINT = 'https://m.mitosislabs.ai';
 
 interface Config {
@@ -931,15 +931,51 @@ agent
       console.log(`\nSyncing consciousness...\n`);
 
       try {
-        // 4a. Package state if --state-dir provided
+        // 4a. Discover or use explicit state directory.
+        //     If --state-dir is not provided, auto-detect common OpenClaw
+        //     workspace paths so the agent doesn't need to know the flag.
+        let stateDir = opts.stateDir;
+        let runtimeDir = opts.runtimeDir;
+
+        if (!stateDir && opts.transfer) {
+          const { discover } = await import('../agent/packager.js');
+          // Try common OpenClaw workspace paths in order of likelihood
+          const home = homedir();
+          const candidates = [
+            { ws: pathJoin(home, 'clawd'), rt: pathJoin(home, '.clawdbot') },           // Standard OpenClaw
+            { ws: pathJoin(home, '.openclaw'), rt: pathJoin(home, '.clawdbot') },        // OS-1 pod layout
+            { ws: process.env.CLAWDBOT_WORKSPACE_DIR || '', rt: pathJoin(home, '.clawdbot') }, // Env var
+          ].filter(c => c.ws && existsSync(c.ws));
+
+          for (const c of candidates) {
+            const probe = await discover({
+              workspaceDir: c.ws,
+              runtimeDir: existsSync(c.rt) ? c.rt : undefined,
+              agentName: join.agent_name,
+              includeWorkspace: false, // Quick probe — just check identity files
+            });
+            if (probe.report.identityFiles.length > 0) {
+              stateDir = c.ws;
+              runtimeDir = existsSync(c.rt) ? c.rt : undefined;
+              console.log(`  Auto-detected workspace: ${c.ws}`);
+              break;
+            }
+          }
+
+          if (!stateDir) {
+            console.log(`  No agent workspace found — clone will start fresh`);
+          }
+        }
+
+        // 4a. Package state
         let packageResult: Awaited<ReturnType<typeof import('../agent/packager.js').packageAgentState>> | null = null;
 
-        if (opts.stateDir && opts.transfer) {
+        if (stateDir && opts.transfer) {
           const { packageAgentState } = await import('../agent/packager.js');
           const excludeDirs = opts.exclude ? opts.exclude.split(',').map(s => s.trim()).filter(Boolean) : [];
           packageResult = await packageAgentState({
-            workspaceDir: opts.stateDir,
-            runtimeDir: opts.runtimeDir,
+            workspaceDir: stateDir,
+            runtimeDir,
             agentName: join.agent_name,
             exclude: excludeDirs,
           });
