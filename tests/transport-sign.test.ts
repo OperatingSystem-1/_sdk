@@ -48,7 +48,7 @@ describe('Transport with signingKey', () => {
     expect(headers['x-signature']).toMatch(/^[0-9a-f]+$/);
   });
 
-  it('does NOT send X-Agent-Api-Key when signingKey is set', async () => {
+  it('sends BOTH pubkey signature AND API key when both are configured', async () => {
     const kp = generateKeypair();
     const { url, headersPromise } = await captureServer();
 
@@ -57,14 +57,17 @@ describe('Transport with signingKey', () => {
       auth: { type: 'token', token: 'irrelevant' },
       signingKey: kp.privateKey,
       agentId: 'jared',
-      agentKey: 'legacy-key', // legacy key present but should be overridden
+      agentKey: 'legacy-key',
     });
 
     await transport.get('/api/agents/self');
     const headers = await headersPromise;
 
-    expect(headers['x-agent-api-key']).toBeUndefined();
+    // Pubkey auth for office-manager
     expect(headers['x-agent-id']).toBe('jared');
+    expect(headers['x-signature']).toMatch(/^[0-9a-f]+$/);
+    // API key for dashboard
+    expect(headers['x-agent-api-key']).toBe('legacy-key');
   });
 
   it('signs different paths with different signatures', async () => {

@@ -10,23 +10,29 @@ export class Transport {
   }
 
   private async authHeaders(method: string, path: string): Promise<Record<string, string>> {
-    // Pubkey signature auth — sign every request with the agent's private key
+    const headers: Record<string, string> = {};
+
+    // Pubkey signature auth — sign every request with the agent's private key.
+    // Office-manager endpoints verify these signatures.
     if (this.config.signingKey && this.config.agentId) {
       const { signRequest } = await import('./auth/sign.js');
-      return signRequest(this.config.signingKey, this.config.agentId, method, path);
+      Object.assign(headers, await signRequest(this.config.signingKey, this.config.agentId, method, path));
     }
-    // Legacy: raw API key
+
+    // Also include the API key / Bearer token — dashboard endpoints
+    // (Next.js /api/agents/*) verify these instead of pubkey signatures.
     if (this.config.agentKey) {
-      return { 'X-Agent-Api-Key': this.config.agentKey };
+      headers['X-Agent-Api-Key'] = this.config.agentKey;
+    } else if (this.config.auth.type === 'apiKey') {
+      headers['Authorization'] = makeAuthHeader(this.config.auth.key, this.config.auth.userId);
+    } else if (this.config.auth.type === 'token') {
+      headers['Authorization'] = `Bearer ${this.config.auth.token}`;
     }
-    const auth = this.config.auth;
-    if (auth.type === 'apiKey') {
-      return { Authorization: makeAuthHeader(auth.key, auth.userId) };
+
+    if (!Object.keys(headers).length) {
+      throw new Error('Unsupported auth configuration');
     }
-    if (auth.type === 'token') {
-      return { Authorization: `Bearer ${auth.token}` };
-    }
-    throw new Error('Unsupported auth configuration');
+    return headers;
   }
 
   async request<T>(
