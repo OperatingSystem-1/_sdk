@@ -166,6 +166,24 @@ export interface OfficeIntegration {
   metadata: Record<string, unknown>;
 }
 
+/** Per-agent integration state returned by the polling endpoint (CLA-519). */
+export interface AgentIntegration {
+  id: string;
+  enabled: boolean;
+  status: 'pending' | 'loading' | 'active' | 'error' | 'offline';
+  error?: string;
+  secretName?: string;
+  channels: string[];
+  envVars: string[];
+  rev: number;
+  toggledAt: string;
+}
+
+export interface AgentIntegrationsResponse {
+  integrations: AgentIntegration[];
+  rev: number;
+}
+
 // ─── Environment Variables ──────────────────────────────────────────────────
 
 export interface EnvVar {
