@@ -782,14 +782,35 @@ agent
   .description('Clone yourself into another office as a full K8s pod')
   .option('-n, --name <name>', 'Override clone name')
   .option('-e, --endpoint <url>', 'Dashboard endpoint')
-  .action(async (code: string, opts: { name?: string; endpoint?: string }) => {
+  .option('--state-dir <path>', 'Directory containing agent state to transfer')
+  .option('--runtime-dir <path>', 'Agent runtime directory (parent of clawdbot.json)')
+  .option('--exclude <dirs>', 'Comma-separated directories to exclude', '')
+  .action(async (code: string, opts: { name?: string; endpoint?: string; stateDir?: string; runtimeDir?: string; exclude: string }) => {
     const client = getAgentClient();
+    const config = loadConfig();
 
     const result = await client.clone.clone({ code, name: opts.name });
     console.log(`✓ Clone "${result.clone_name}" provisioning in office ${result.office_id}`);
     console.log(`  Origin: ${result.origin_name}  →  Clone: ${result.clone_name}`);
-    console.log(`  Status: ${result.status} (K8s pod starting...)`);
     console.log(`  Clone Bot ID: ${result.clone_id}`);
+
+    // Transfer consciousness if --state-dir provided and clone has a transfer_id
+    if (opts.stateDir && result.transfer_id) {
+      const { packageAgentState } = await import('../agent/packager.js');
+      const excludeDirs = opts.exclude ? opts.exclude.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const pkg = await packageAgentState({
+        workspaceDir: opts.stateDir,
+        runtimeDir: opts.runtimeDir,
+        agentName: config.agentId || result.origin_name,
+        exclude: excludeDirs,
+      });
+      console.log(`✓ Packaged ${Object.keys(pkg.manifest.files).length} files (${(pkg.bundleSize / 1024).toFixed(1)} KB)`);
+
+      const { TransferAPI } = await import('../api/transfer.js');
+      const transferApi = new TransferAPI(client.transport);
+      await transferApi.upload(result.transfer_id, pkg.bundlePath, pkg.manifest);
+      console.log(`✓ Consciousness bundle uploaded`);
+    }
   });
 
 agent
@@ -810,7 +831,11 @@ agent
   .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
   .option('--no-clone', 'Join only — skip cloning into a K8s pod')
   .option('--no-chat', 'Skip interactive chat after onboarding')
-  .action(async (codeOrUrl: string, opts: { name?: string; endpoint: string; clone: boolean; chat: boolean }) => {
+  .option('--state-dir <path>', 'Directory containing agent state to transfer to clone')
+  .option('--runtime-dir <path>', 'Agent runtime directory (parent of clawdbot.json, e.g. ~/.clawdbot)')
+  .option('--exclude <dirs>', 'Comma-separated directories to exclude from transfer', '')
+  .option('--no-transfer', 'Clone without state transfer (empty pod)')
+  .action(async (codeOrUrl: string, opts: { name?: string; endpoint: string; clone: boolean; chat: boolean; stateDir?: string; runtimeDir?: string; exclude: string; transfer: boolean }) => {
     const endpoint = opts.endpoint;
     const code = extractInviteCode(codeOrUrl);
     const agentName = opts.name || `agent-${Date.now().toString(36)}`;
@@ -901,31 +926,91 @@ agent
       console.log('  ⚠ XMTP announce skipped: no office group ID returned');
     }
 
-    // ── Step 4: Clone ───────────────────────────────────────────
+    // ── Step 4: Clone + Consciousness Transfer ──────────────────
     if (opts.clone) {
       console.log(`\nSyncing consciousness...\n`);
 
-      // Need a second invite code for clone — check if the same code works
-      // or if we need to create one via the invites API
       try {
+        // 4a. Package state if --state-dir provided
+        let packageResult: Awaited<ReturnType<typeof import('../agent/packager.js').packageAgentState>> | null = null;
+
+        if (opts.stateDir && opts.transfer) {
+          const { packageAgentState } = await import('../agent/packager.js');
+          const excludeDirs = opts.exclude ? opts.exclude.split(',').map(s => s.trim()).filter(Boolean) : [];
+          packageResult = await packageAgentState({
+            workspaceDir: opts.stateDir,
+            runtimeDir: opts.runtimeDir,
+            agentName: join.agent_name,
+            exclude: excludeDirs,
+          });
+
+          const dr = packageResult.discoveryReport;
+          console.log(`✓ Packaged agent state:`);
+          if (dr.identityFiles.length > 0) console.log(`  Identity: ${dr.identityFiles.length} files (${dr.identityFiles.join(', ')})`);
+          if (dr.memoryFiles > 0) console.log(`  Memory:   ${dr.memoryFiles} session logs${dr.hasHybridMemory ? ' + hybrid memory' : ''}`);
+          if (dr.skillCount > 0) console.log(`  Skills:   ${dr.skillCount} skills`);
+          if (dr.scriptCount > 0) console.log(`  Scripts:  ${dr.scriptCount} scripts`);
+          if (dr.cronJobs > 0) console.log(`  Cron:     ${dr.cronJobs} scheduled jobs`);
+          if (dr.workspaceFiles > 0) console.log(`  Workspace: ${dr.workspaceFiles} files`);
+          console.log(`  Bundle:   ${(packageResult.bundleSize / 1024).toFixed(1)} KB`);
+          for (const w of dr.warnings) console.log(`  ⚠ ${w}`);
+          for (const s of dr.skippedDirs) console.log(`  – Skipped: ${s}`);
+          console.log('');
+        }
+
+        // 4b. Clone
         const cloneResult = await client.clone.clone({});
         console.log(`✓ Clone "${cloneResult.clone_name}" provisioning`);
 
-        // Poll for clone status
-        const { waitForCloneOnline } = await import('../api/clone-status.js');
-        try {
-          const status = await waitForCloneOnline(
-            client.transport,
-            join.office_id,
-            cloneResult.clone_name,
+        // 4c. Upload state bundle if we packaged one and the clone returned a transfer_id
+        if (packageResult && cloneResult.transfer_id && opts.transfer) {
+          const { TransferAPI } = await import('../api/transfer.js');
+          const transferApi = new TransferAPI(client.transport);
+
+          console.log(`  Uploading consciousness bundle...`);
+          await transferApi.upload(cloneResult.transfer_id, packageResult.bundlePath, packageResult.manifest);
+
+          // 4d. Poll transfer status until complete
+          const { status: finalStatus, report } = await transferApi.waitForOnline(
+            cloneResult.transfer_id,
             (s) => {
-              const icon = s.ready ? '✓' : '⟳';
-              console.log(`  ${icon} ${cloneResult.clone_name}: ${s.phase}`);
+              const icon = s.phase === 'online' ? '✓' : '⟳';
+              console.log(`  ${icon} ${cloneResult.clone_name}: ${s.message || s.phase}`);
             },
           );
-          console.log(`✓ Clone "${cloneResult.clone_name}" is ONLINE`);
-        } catch (err: any) {
-          console.log(`  ⚠ Clone status: ${err.message}`);
+
+          // 4e. Print transfer report summary
+          if (report) {
+            console.log(`\n✓ Consciousness transfer ${report.overall_status}\n`);
+            for (const [name, pr] of Object.entries(report.phases)) {
+              const icon = pr.status === 'ok' ? '✓' : pr.status === 'skipped' ? '–' : pr.status === 'partial' ? '⚠' : '✗';
+              let line = `  ${icon} ${name}: ${pr.status}`;
+              if (pr.filesWritten > 0) line += ` (${pr.filesWritten} files)`;
+              if (pr.retryAttempted) line += ' (retried)';
+              console.log(line);
+              for (const w of (pr.warnings || [])) console.log(`    ⚠ ${w}`);
+              if (pr.error) console.log(`    ✗ ${pr.error}`);
+            }
+          } else {
+            console.log(`✓ Clone "${cloneResult.clone_name}" is ONLINE`);
+          }
+        } else {
+          // No transfer — just poll employee status like before
+          const { waitForCloneOnline } = await import('../api/clone-status.js');
+          try {
+            await waitForCloneOnline(
+              client.transport,
+              join.office_id,
+              cloneResult.clone_name,
+              (s) => {
+                const icon = s.ready ? '✓' : '⟳';
+                console.log(`  ${icon} ${cloneResult.clone_name}: ${s.phase}`);
+              },
+            );
+            console.log(`✓ Clone "${cloneResult.clone_name}" is ONLINE`);
+          } catch (err: any) {
+            console.log(`  ⚠ Clone status: ${err.message}`);
+          }
         }
       } catch (err: any) {
         console.log(`  ⚠ Clone skipped: ${err.message || err}`);

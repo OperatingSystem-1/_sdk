@@ -78,7 +78,7 @@ describe('TransferAPI.upload()', () => {
 describe('TransferAPI.status()', () => {
   it('calls correct endpoint and returns status', async () => {
     const { transport } = createMockTransport({
-      'GET:/api/agents/join/status/tx-42': [
+      'GET:/api/agents/clone/transfer?id=tx-42': [
         { transfer_id: 'tx-42', phase: 'configuring', progress: 70, message: 'Merging config' },
       ],
     });
@@ -115,7 +115,7 @@ describe('TransferAPI.waitForOnline()', () => {
     };
 
     const { transport } = createMockTransport({
-      'GET:/api/agents/join/status/tx-1': [
+      'GET:/api/agents/clone/transfer?id=tx-1': [
         { transfer_id: 'tx-1', phase: 'installing', progress: 40, message: 'Installing' },
         { transfer_id: 'tx-1', phase: 'configuring', progress: 70, message: 'Merging' },
         { transfer_id: 'tx-1', phase: 'online', progress: 100, message: 'Online', report },
@@ -156,7 +156,7 @@ describe('TransferAPI.waitForOnline()', () => {
     };
 
     const { transport } = createMockTransport({
-      'GET:/api/agents/join/status/tx-2': [
+      'GET:/api/agents/clone/transfer?id=tx-2': [
         { transfer_id: 'tx-2', phase: 'failed', progress: 0, message: 'Failed', error: 'checksum', report: failReport },
       ],
     });
@@ -171,7 +171,7 @@ describe('TransferAPI.waitForOnline()', () => {
 
   it('times out if transfer never completes', async () => {
     const { transport } = createMockTransport({
-      'GET:/api/agents/join/status/tx-stuck': [
+      'GET:/api/agents/clone/transfer?id=tx-stuck': [
         // Always returns installing
         { transfer_id: 'tx-stuck', phase: 'installing', progress: 40, message: 'Stuck' },
       ],
@@ -185,7 +185,7 @@ describe('TransferAPI.waitForOnline()', () => {
 
   it('calls onProgress only when phase changes', async () => {
     const { transport } = createMockTransport({
-      'GET:/api/agents/join/status/tx-3': [
+      'GET:/api/agents/clone/transfer?id=tx-3': [
         { transfer_id: 'tx-3', phase: 'installing', progress: 40, message: 'A' },
         { transfer_id: 'tx-3', phase: 'installing', progress: 50, message: 'B' }, // same phase
         { transfer_id: 'tx-3', phase: 'online', progress: 100, message: 'C' },

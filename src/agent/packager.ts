@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { createWriteStream, createReadStream, existsSync, statSync, readFileSync, mkdirSync } from 'node:fs';
 import { readdir, stat, readFile } from 'node:fs/promises';
 import { join, relative, basename, extname } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, hostname } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import type { Manifest, ManifestFileEntry, ManifestStats, DiscoveryReport, PackageResult } from '../types/index.js';
@@ -366,7 +366,7 @@ export async function packageAgentState(opts: PackageOptions): Promise<PackageRe
   const manifest: Manifest = {
     version: '1.0',
     agent_name: opts.agentName,
-    origin: `local/${require('os').hostname()}`,
+    origin: `local/${hostname()}`,
     packed_at: new Date().toISOString(),
     files: manifestFiles,
     stats,

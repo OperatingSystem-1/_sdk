@@ -33,7 +33,7 @@ export class TransferAPI {
 
   /** Get current transfer status. */
   async status(transferId: string): Promise<TransferStatus> {
-    return this.transport.get<TransferStatus>(`/api/agents/join/status/${transferId}`);
+    return this.transport.get<TransferStatus>(`/api/agents/clone/transfer?id=${transferId}`);
   }
 
   /**
