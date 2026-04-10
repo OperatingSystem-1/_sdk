@@ -1,0 +1,1 @@
+{"version":3,"file":"invites.js","sourceRoot":"","sources":["../../src/api/invites.ts"],"names":[],"mappings":"AAQA,MAAM,OAAO,UAAU;IACD;IAApB,YAAoB,SAAoB;QAApB,cAAS,GAAT,SAAS,CAAW;IAAG,CAAC;IAE5C,sEAAsE;IACtE,KAAK,CAAC,MAAM,CAAC,QAAgB;QAC3B,OAAO,IAAI,CAAC,SAAS,CAAC,IAAI,CACxB,mBAAmB,QAAQ,UAAU,CACtC,CAAC;IACJ,CAAC;CACF"}

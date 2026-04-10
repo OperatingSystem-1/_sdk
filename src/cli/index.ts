@@ -1008,6 +1008,31 @@ agent
       console.log(`    Install the XMTP extension manually to enable chat.`);
     }
 
+    // ── Step 3b: Install XMTP reply bridge ──────────────────────
+    //    The clawdbot gateway doesn't send XMTP replies natively.
+    //    This bridge watches the session JSONL for assistant responses
+    //    and sends them back via XMTP DM to the office identity.
+    console.log(`\nInstalling XMTP reply bridge...`);
+    try {
+      const { installReplyBridge } = await import('../agent/install-reply-bridge.js');
+      const bridgeResult = await installReplyBridge({
+        privateKey: kp.privateKey,
+        officeXmtpAddress: '0x82ced602e34ac461cfd4d63d5aea992c0da8f496', // TODO: get from join response
+        agentName: join.agent_name,
+        xmtpDbPath: `${process.env.HOME || '/home/ubuntu'}/.clawdbot/agents/default/xmtp-db`,
+        sessionsDir: `${process.env.HOME || '/home/ubuntu'}/.clawdbot/agents/main/sessions`,
+        xmtpNodeModules: `${process.env.HOME || '/home/ubuntu'}/.clawdbot/extensions/xmtp/node_modules`,
+      });
+      if (bridgeResult.success) {
+        console.log(`✓ Reply bridge installed (${bridgeResult.method})`);
+      } else {
+        console.log(`  ⚠ Reply bridge: ${bridgeResult.error}`);
+      }
+    } catch (err: any) {
+      console.log(`  ⚠ Reply bridge install failed: ${err.message || err}`);
+      console.log(`    Agent can receive messages but replies won't reach the office chat.`);
+    }
+
     // ── Step 4: Clone + Consciousness Transfer ──────────────────
     if (opts.clone) {
       console.log(`\nSyncing consciousness...\n`);
