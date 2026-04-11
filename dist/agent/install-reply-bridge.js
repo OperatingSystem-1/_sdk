@@ -86,7 +86,7 @@ function startTail(sessionFile) {
         else if (Array.isArray(msg.content))
           text = msg.content.filter(c => c.type === "text").map(c => c.text).join("\\n");
         text = clean(text);
-        if (!text || text.length < 3 || text === "NO_REPLY" || text === "NO") return;
+        if (!text || text.length < 3 || text === "NO_REPLY" || text === "NO" || text.startsWith("[CONTEXT]")) return;
         console.log("[bridge] Reply:", text.slice(0, 80));
         try { await sendReply(text); console.log("[bridge] Sent"); }
         catch (err) { console.error("[bridge] Send failed:", err.message); }
