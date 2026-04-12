@@ -17,6 +17,23 @@ function die(msg) {
     console.error(`error: ${msg}`);
     process.exit(1);
 }
+/**
+ * Auto-detect agent name from environment, or prompt interactively.
+ */
+async function detectAgentName() {
+    if (process.env.AGENT_NAME) return process.env.AGENT_NAME;
+    if (process.env.BOT_NAME) return process.env.BOT_NAME;
+    // Prompt
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const name = await new Promise((resolve) => {
+        rl.question('What is your name? Just respond with your name and nothing else.\n> ', (answer) => {
+            rl.close();
+            resolve(answer.trim());
+        });
+    });
+    if (!name) die('Agent name is required.');
+    return name;
+}
 function peekConfig() {
     if (!existsSync(CONFIG_FILE))
         return null;
@@ -581,16 +598,15 @@ const agent = program.command('agent').description('External agent operations (A
 agent
     .command('join <code>')
     .description('Join an office as an external agent (no K8s pod)')
-    .option('-n, --name <name>', 'Agent name (required)')
+    .option('-n, --name <name>', 'Agent name (auto-detected from AGENT_NAME/BOT_NAME env, or prompted)')
     .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
     .action(async (code, opts) => {
-    if (!opts.name)
-        die('Agent name required: mi agent join <CODE> -n <name>');
+    const agentName = opts.name || await detectAgentName();
     const endpoint = opts.endpoint;
     const resp = await fetch(`${endpoint}/api/agents/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, agent_name: opts.name }),
+        body: JSON.stringify({ code, agent_name: agentName }),
     });
     if (!resp.ok) {
         const err = (await resp.json().catch(() => ({})));
@@ -684,7 +700,7 @@ agent
         code = urlMatch[2];
     }
     const endpoint = opts.endpoint;
-    const agentName = opts.name || `agent-${Date.now().toString(36)}`;
+    const agentName = opts.name || await detectAgentName();
     console.log(`\nConnecting to ${endpoint}...\n`);
     // ── Step 0: Generate keypair ────────────────────────────────
     const { getOrCreateKeypair } = await import('../auth/keys.js');
