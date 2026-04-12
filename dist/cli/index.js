@@ -669,11 +669,13 @@ agent
 agent
     .command('onboard <codeOrUrl>')
     .description('Full onboarding: join → heartbeat → clone → chat (one command)')
-    .option('-n, --name <name>', 'Agent name (auto-detected if not set)')
+    .option('-n, --name <name>', 'Your agent name (required — this is how you appear in the office)')
     .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
     .option('--no-clone', 'Join only — skip cloning into a K8s pod')
     .option('--no-chat', 'Skip interactive chat after onboarding')
     .action(async (codeOrUrl, opts) => {
+    if (!opts.name)
+        die('Agent name required: mi agent onboard <URL> -n <your-name>\n\n  Your name is your identity in the office. Use the name your users know you by.');
     // Accept both raw codes (ABC123) and URLs (https://mitosislabs.ai/r/ABC123)
     let code = codeOrUrl;
     const urlMatch = codeOrUrl.match(/^(https?:\/\/[^/]+)\/r\/([A-Za-z0-9]+)$/);
@@ -684,7 +686,7 @@ agent
         code = urlMatch[2];
     }
     const endpoint = opts.endpoint;
-    const agentName = opts.name || `agent-${Date.now().toString(36)}`;
+    const agentName = opts.name;
     console.log(`\nConnecting to ${endpoint}...\n`);
     // ── Step 0: Generate keypair ────────────────────────────────
     const { getOrCreateKeypair } = await import('../auth/keys.js');
