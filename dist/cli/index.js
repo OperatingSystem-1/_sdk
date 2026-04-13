@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { OS1Client } from '../client.js';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, } from 'node:fs';
-import { join, basename } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, openSync, } from 'node:fs';
+import { join, basename, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
+import { spawn as nodeSpawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 const program = new Command();
 const CONFIG_DIR = join(homedir(), '.mi');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+const DAEMON_PID_FILE = join(CONFIG_DIR, 'daemon.pid');
 const DEFAULT_ENDPOINT = 'https://m.mitosislabs.ai';
 program
     .name('mi')
@@ -33,6 +36,61 @@ async function detectAgentName() {
     });
     if (!name) die('Agent name is required.');
     return name;
+}
+/**
+ * Spawn the heartbeat daemon as a detached background process.
+ * The child runs the same CLI binary with `agent heartbeat-daemon`.
+ * Returns the child PID.
+ */
+function spawnHeartbeatDaemon() {
+    // Resolve the CLI binary path from this file's location
+    const thisFile = fileURLToPath(import.meta.url);
+    const logFile = join(CONFIG_DIR, 'daemon.log');
+    mkdirSync(CONFIG_DIR, { recursive: true });
+    const out = openSync(logFile, 'a');
+    const child = nodeSpawn(process.execPath, [thisFile, 'agent', 'heartbeat-daemon'], {
+        detached: true,
+        stdio: ['ignore', out, out],
+        env: { ...process.env },
+    });
+    child.unref();
+    const pid = child.pid;
+    if (pid) {
+        writeFileSync(DAEMON_PID_FILE, String(pid), { mode: 0o600 });
+    }
+    return pid;
+}
+/**
+ * Check if the heartbeat daemon is running.
+ */
+function isDaemonRunning() {
+    if (!existsSync(DAEMON_PID_FILE)) return false;
+    try {
+        const pid = parseInt(readFileSync(DAEMON_PID_FILE, 'utf-8').trim(), 10);
+        if (isNaN(pid)) return false;
+        process.kill(pid, 0); // signal 0 = check if alive
+        return true;
+    } catch {
+        // Process doesn't exist — clean up stale PID file
+        try { unlinkSync(DAEMON_PID_FILE); } catch {}
+        return false;
+    }
+}
+/**
+ * Stop the heartbeat daemon.
+ */
+function stopDaemon() {
+    if (!existsSync(DAEMON_PID_FILE)) return false;
+    try {
+        const pid = parseInt(readFileSync(DAEMON_PID_FILE, 'utf-8').trim(), 10);
+        if (isNaN(pid)) return false;
+        process.kill(pid, 'SIGTERM');
+        try { unlinkSync(DAEMON_PID_FILE); } catch {}
+        return true;
+    } catch {
+        try { unlinkSync(DAEMON_PID_FILE); } catch {}
+        return false;
+    }
 }
 function peekConfig() {
     if (!existsSync(CONFIG_FILE))
@@ -655,6 +713,27 @@ agent
     await new Promise(() => { });
 });
 agent
+    .command('stop-daemon')
+    .description('Stop the background heartbeat daemon')
+    .action(async () => {
+    if (stopDaemon()) {
+        console.log('✓ Heartbeat daemon stopped');
+    } else {
+        console.log('No daemon running');
+    }
+});
+agent
+    .command('daemon-status')
+    .description('Check if the heartbeat daemon is running')
+    .action(async () => {
+    if (isDaemonRunning()) {
+        const pid = readFileSync(DAEMON_PID_FILE, 'utf-8').trim();
+        console.log(`✓ Daemon running (pid ${pid})`);
+    } else {
+        console.log('✗ No daemon running');
+    }
+});
+agent
     .command('clone <code>')
     .description('Clone yourself into another office as a full K8s pod')
     .option('-n, --name <name>', 'Override clone name')
@@ -714,6 +793,7 @@ agent
             code,
             agent_name: agentName,
             public_key: kp.publicKey,
+            xmtp_address: kp.address,
         }),
     });
     if (!joinResp.ok) {
@@ -733,15 +813,21 @@ agent
     if (join.xmtp?.registered) {
         console.log(`✓ XMTP: registered in office group chat (${kp.address})`);
     }
-    // ── Step 2: Heartbeat ───────────────────────────────────────
+    // ── Step 2: Heartbeat (detached daemon) ─────────────────────
     const client = new OS1Client({
         endpoint,
         auth: { type: 'token', token: join.api_key },
         signingKey: kp.privateKey,
         agentId: join.agent_name,
     });
-    client.heartbeat.start(30_000);
-    console.log(`✓ Heartbeat daemon started (every 30s)`);
+    // Send one immediate heartbeat to confirm auth works
+    try { await client.heartbeat.send(); } catch {}
+    // Spawn detached daemon — survives parent exit, exec timeouts, etc.
+    if (isDaemonRunning()) {
+        stopDaemon();
+    }
+    const daemonPid = spawnHeartbeatDaemon();
+    console.log(`✓ Heartbeat daemon running (pid ${daemonPid}, log: ~/.mi/daemon.log)`);
     // ── Step 3: Announce ────────────────────────────────────────
     try {
         await client.chat.send(join.office_id, join.agent_name, 'user', `${join.agent_name} has joined the office.`);
@@ -830,16 +916,14 @@ agent
         rl.on('close', () => {
             clearInterval(pollInterval);
             listener.disconnect();
-            client.heartbeat.stop();
-            console.log('\nDetached. Agent remains joined.');
+            console.log('\nDetached. Heartbeat daemon keeps you online.');
             process.exit(0);
         });
         process.on('SIGINT', () => rl.close());
         await new Promise(() => { });
     }
     else {
-        console.log(`\n✓ Onboarding complete. Run 'mi agent self' to check status.`);
-        client.heartbeat.stop();
+        console.log(`\n✓ Onboarding complete. Heartbeat daemon keeps you online.`);
     }
 });
 // ─── showcase (wall of fame) ─────────────────────────────────────────────────
