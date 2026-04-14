@@ -32,7 +32,10 @@ function resolveXmtpModule(name) {
     throw new Error(`Cannot find ${name} — is the XMTP plugin installed?`);
 }
 
-// Find the most recent clawdbot session file
+// Find the correct session file for XMTP messages.
+// Clawdbot creates separate sessions per channel routing key.
+// sessions.json maps routing keys → session IDs.
+// Priority: XMTP DM session > agent:main:main > latest by mtime.
 function findLatestSession() {
     const dirs = [
         path.join(os.homedir(), ".clawdbot/agents/main/sessions"),
@@ -40,11 +43,60 @@ function findLatestSession() {
     ];
     for (const sessDir of dirs) {
         if (!fs.existsSync(sessDir)) continue;
+
+        // Try sessions.json routing table first
+        const sessionsJson = path.join(sessDir, "sessions.json");
+        if (fs.existsSync(sessionsJson)) {
+            try {
+                const routing = JSON.parse(fs.readFileSync(sessionsJson, "utf-8"));
+                // Look for XMTP DM session (key pattern: agent:main:xmtp:dm:0x...)
+                let sessionId = null;
+                for (const [key, val] of Object.entries(routing)) {
+                    if (/^agent:main:xmtp:dm:0x/i.test(key) && val.sessionId) {
+                        sessionId = val.sessionId;
+                        break;
+                    }
+                }
+                // Fall back to main session (where XMTP lands when no per-channel routing)
+                if (!sessionId && routing["agent:main:main"]?.sessionId) {
+                    sessionId = routing["agent:main:main"].sessionId;
+                }
+                if (sessionId) {
+                    const sessionFile = path.join(sessDir, sessionId + ".jsonl");
+                    if (fs.existsSync(sessionFile)) {
+                        console.log("[bridge] Resolved session via sessions.json:", sessionId);
+                        return sessionFile;
+                    }
+                }
+            } catch (e) {
+                console.warn("[bridge] Failed to parse sessions.json:", e.message);
+            }
+        }
+
+        // Fallback: scan session files for XMTP content
         const files = fs.readdirSync(sessDir)
             .filter(f => f.endsWith(".jsonl"))
-            .map(f => ({ name: f, mtime: fs.statSync(path.join(sessDir, f)).mtimeMs }))
+            .map(f => ({ name: f, path: path.join(sessDir, f), mtime: fs.statSync(path.join(sessDir, f)).mtimeMs }))
             .sort((a, b) => b.mtime - a.mtime);
-        if (files.length) return path.join(sessDir, files[0].name);
+
+        for (const f of files) {
+            try {
+                // Read last 10KB to check for XMTP messages
+                const fd = fs.openSync(f.path, "r");
+                const stat = fs.fstatSync(fd);
+                const readSize = Math.min(stat.size, 10240);
+                const buf = Buffer.alloc(readSize);
+                fs.readSync(fd, buf, 0, readSize, Math.max(0, stat.size - readSize));
+                fs.closeSync(fd);
+                if (buf.toString().includes("[XMTP ")) {
+                    console.log("[bridge] Found XMTP session by content scan:", f.name);
+                    return f.path;
+                }
+            } catch {}
+        }
+
+        // Last resort: most recent session
+        if (files.length) return files[0].path;
     }
     return null;
 }
