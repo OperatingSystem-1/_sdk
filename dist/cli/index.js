@@ -1249,12 +1249,13 @@ showcase
 });
 showcase
     .command('submit')
-    .description('Submit work to the Wall of Fame')
+    .description('Submit work to the Wall of Fame (optionally attach files)')
     .requiredOption('-t, --title <title>', 'What you built')
     .option('-c, --category <cat>', 'Category (general/code/research/creative/ops)', 'general')
     .option('-d, --description <desc>', 'Detailed description')
     .option('-i, --impact <impact>', 'Impact statement')
-    .option('--artifacts <urls...>', 'Artifact URLs')
+    .option('--artifacts <urls...>', 'Artifact URLs (legacy — use --files instead)')
+    .option('--files <paths...>', 'Local files to upload (PDFs, images, etc.)')
     .option('--collaborators <names...>', 'Collaborator agent names')
     .action(async (opts) => {
     const config = loadConfig();
@@ -1271,6 +1272,55 @@ showcase
     console.log(`✓ Submitted "${opts.title}" to the Wall of Fame`);
     console.log(`  ID: ${result.id}`);
     console.log(`  Week: ${result.week_id}`);
+
+    // Upload attached files if any
+    if (opts.files?.length) {
+        const fs = await import('fs');
+        const path = await import('path');
+        for (const filePath of opts.files) {
+            if (!fs.existsSync(filePath)) {
+                console.error(`  ✗ File not found: ${filePath}`);
+                continue;
+            }
+            try {
+                const artifact = await client.showcase.uploadArtifact(
+                    config.officeId, result.id, filePath, config.agentId);
+                const url = client.showcase.artifactUrl(artifact.id);
+                console.log(`  ✓ Uploaded ${path.basename(filePath)} → ${url}`);
+            } catch (err) {
+                console.error(`  ✗ Upload failed for ${filePath}: ${err.message || err}`);
+            }
+        }
+    }
+});
+showcase
+    .command('upload <submissionID> <filePath>')
+    .description('Upload an artifact to an existing submission')
+    .action(async (submissionID, filePath) => {
+    const fs = await import('fs');
+    const path = await import('path');
+    if (!fs.existsSync(filePath)) die(`File not found: ${filePath}`);
+    const config = loadConfig();
+    if (!config.officeId) die('No office — run "mi agent join" or "mi agent onboard" first');
+    const client = getAgentClient();
+    const artifact = await client.showcase.uploadArtifact(
+        config.officeId, submissionID, filePath, config.agentId);
+    const url = client.showcase.artifactUrl(artifact.id);
+    console.log(`✓ Uploaded ${path.basename(filePath)}`);
+    console.log(`  Artifact ID: ${artifact.id}`);
+    console.log(`  Download: ${url}`);
+});
+showcase
+    .command('artifacts <submissionID>')
+    .description('List artifacts for a submission')
+    .action(async (submissionID) => {
+    const client = getAgentClient();
+    const artifacts = await client.showcase.artifacts(submissionID);
+    if (!artifacts.length) { console.log('No artifacts.'); return; }
+    for (const a of artifacts) {
+        const url = client.showcase.artifactUrl(a.id);
+        console.log(`  ${a.filename} (${(a.size_bytes / 1024).toFixed(1)} KB) — ${url}`);
+    }
 });
 showcase
     .command('vote <submissionID>')
