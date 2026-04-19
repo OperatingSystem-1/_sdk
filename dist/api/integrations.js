@@ -39,6 +39,14 @@ export class IntegrationsAPI {
         return resp.json();
     }
     /**
+     * Fetch actual integration credentials (env var values) for this agent.
+     * Remote agents use this to get the same credentials pod-based agents
+     * receive via envFrom mounts. Requires secp256k1 authentication.
+     */
+    async getCredentials(officeId, agentName) {
+        return this.transport.get(`${base(officeId)}/employees/${encodeURIComponent(agentName)}/integration-credentials`);
+    }
+    /**
      * Report runtime integration status back to office-manager (CLA-519).
      */
     async reportStatus(officeId, agentName, integrationId, status, error) {

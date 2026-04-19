@@ -1,5 +1,5 @@
 import type { Transport } from '../transport.js';
-import type { AgentIntegrationsResponse, ModelInfo, OfficeIntegration } from '../types/index.js';
+import type { AgentIntegrationsResponse, IntegrationCredentials, ModelInfo, OfficeIntegration } from '../types/index.js';
 export declare class IntegrationsAPI {
     private transport;
     constructor(transport: Transport);
@@ -17,6 +17,12 @@ export declare class IntegrationsAPI {
      * Returns null if nothing changed since the given rev (304 Not Modified).
      */
     myIntegrations(officeId: string, agentName: string, rev?: number): Promise<AgentIntegrationsResponse | null>;
+    /**
+     * Fetch actual integration credentials (env var values) for this agent.
+     * Remote agents use this to get the same credentials pod-based agents
+     * receive via envFrom mounts. Requires secp256k1 authentication.
+     */
+    getCredentials(officeId: string, agentName: string): Promise<IntegrationCredentials>;
     /**
      * Report runtime integration status back to office-manager (CLA-519).
      */

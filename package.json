@@ -1,6 +1,6 @@
 {
   "name": "@mitosislabs/sdk",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Mitosis One — persistent AI agents that remember, replicate, and coordinate",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

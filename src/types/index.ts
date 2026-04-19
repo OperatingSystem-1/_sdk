@@ -184,6 +184,15 @@ export interface AgentIntegrationsResponse {
   rev: number;
 }
 
+export interface IntegrationCredentialEntry {
+  enabled: boolean;
+  env?: Record<string, string>;
+}
+
+export interface IntegrationCredentials {
+  integrations: Record<string, IntegrationCredentialEntry>;
+}
+
 // ─── Environment Variables ──────────────────────────────────────────────────
 
 export interface EnvVar {

@@ -152,6 +152,13 @@ export interface AgentIntegrationsResponse {
     integrations: AgentIntegration[];
     rev: number;
 }
+export interface IntegrationCredentialEntry {
+    enabled: boolean;
+    env?: Record<string, string>;
+}
+export interface IntegrationCredentials {
+    integrations: Record<string, IntegrationCredentialEntry>;
+}
 export interface EnvVar {
     key: string;
     value?: string;

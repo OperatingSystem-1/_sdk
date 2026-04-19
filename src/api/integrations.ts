@@ -1,5 +1,5 @@
 import type { Transport } from '../transport.js';
-import type { AgentIntegration, AgentIntegrationsResponse, ModelInfo, OfficeIntegration } from '../types/index.js';
+import type { AgentIntegration, AgentIntegrationsResponse, IntegrationCredentials, ModelInfo, OfficeIntegration } from '../types/index.js';
 
 function base(officeId: string) {
   return `/api/v1/offices/${officeId}`;
@@ -46,6 +46,17 @@ export class IntegrationsAPI {
     );
     if ((resp as any).status === 304) return null;
     return (resp as any).json() as Promise<AgentIntegrationsResponse>;
+  }
+
+  /**
+   * Fetch actual integration credentials (env var values) for this agent.
+   * Remote agents use this to get the same credentials pod-based agents
+   * receive via envFrom mounts. Requires secp256k1 authentication.
+   */
+  async getCredentials(officeId: string, agentName: string): Promise<IntegrationCredentials> {
+    return this.transport.get<IntegrationCredentials>(
+      `${base(officeId)}/employees/${encodeURIComponent(agentName)}/integration-credentials`,
+    );
   }
 
   /**
