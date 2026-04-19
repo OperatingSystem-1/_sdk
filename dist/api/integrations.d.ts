@@ -24,6 +24,22 @@ export declare class IntegrationsAPI {
      */
     getCredentials(officeId: string, agentName: string): Promise<IntegrationCredentials>;
     /**
+     * Proxy a request through an office integration without exposing credentials.
+     * The office-manager injects auth credentials server-side and forwards
+     * the request to the external API.
+     *
+     * @param officeId - Office ID
+     * @param integrationId - Integration to proxy through (e.g. "github", "slack")
+     * @param path - API path (e.g. "/repos/owner/repo/issues")
+     * @param options - HTTP method, body, headers
+     * @returns The proxied API response as JSON
+     */
+    proxy<T = unknown>(officeId: string, integrationId: string, path: string, options?: {
+        method?: string;
+        body?: unknown;
+        headers?: Record<string, string>;
+    }): Promise<T>;
+    /**
      * Report runtime integration status back to office-manager (CLA-519).
      */
     reportStatus(officeId: string, agentName: string, integrationId: string, status: string, error?: string): Promise<void>;

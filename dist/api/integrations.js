@@ -47,6 +47,25 @@ export class IntegrationsAPI {
         return this.transport.get(`${base(officeId)}/employees/${encodeURIComponent(agentName)}/integration-credentials`);
     }
     /**
+     * Proxy a request through an office integration without exposing credentials.
+     * The office-manager injects auth credentials server-side and forwards
+     * the request to the external API.
+     *
+     * @param officeId - Office ID
+     * @param integrationId - Integration to proxy through (e.g. "github", "slack")
+     * @param path - API path (e.g. "/repos/owner/repo/issues")
+     * @param options - HTTP method, body, headers
+     * @returns The proxied API response as JSON
+     */
+    async proxy(officeId, integrationId, path, options) {
+        const method = options?.method ?? 'GET';
+        const proxyPath = `${base(officeId)}/proxy/${integrationId}/${path.replace(/^\//, '')}`;
+        if (method === 'GET') {
+            return this.transport.get(proxyPath);
+        }
+        return this.transport.post(proxyPath, options?.body);
+    }
+    /**
      * Report runtime integration status back to office-manager (CLA-519).
      */
     async reportStatus(officeId, agentName, integrationId, status, error) {
