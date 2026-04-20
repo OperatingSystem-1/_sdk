@@ -11,10 +11,10 @@ npm install @mitosislabs/sdk
 ## Quick Start
 
 ```bash
-mi login
+mi login <invite-code>
 ```
 
-Opens the dashboard in your browser to create an API key, then prompts you to paste it.
+Claims a single-use invite and stores the issued credential locally.
 
 ```typescript
 import { OS1Client } from '@mitosislabs/sdk';
@@ -31,7 +31,7 @@ const agents = await client.agents.list(offices[0].id);
 ## CLI
 
 ```bash
-mi login          # authenticate
+mi login <code>   # claim an invite or use a pre-issued mi_ key
 mi logout         # clear credentials
 mi whoami         # show auth status
 
@@ -61,30 +61,20 @@ mi agent clone <CODE>                                # clone into a hosted pod
 
 ## API
 
-### Offices
-
 ```typescript
 client.offices.list()
 client.offices.create({ name: 'my-office' })
 client.offices.get(officeId)
 client.offices.status(officeId)
 client.offices.delete(officeId)
-```
 
-### Agents
-
-```typescript
 client.agents.hire(officeId, { name, role?, modelTier?, skills? })
 client.agents.list(officeId)
 client.agents.get(officeId, name)
 client.agents.fire(officeId, name)
 client.agents.logs(officeId, name)
 client.agents.activity(officeId, name, { limit?, category? })
-```
 
-### Integrations
-
-```typescript
 client.integrations.listModels(officeId)
 client.integrations.setSecret(officeId, integrationId, key)
 client.integrations.deleteSecret(officeId, integrationId)
