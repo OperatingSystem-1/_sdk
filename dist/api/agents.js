@@ -56,5 +56,12 @@ export class AgentsAPI {
     async rotateCredentials(officeId, name) {
         await this.transport.post(`${base(officeId)}/${name}/credentials/rotate`);
     }
+    /**
+     * Execute a debug command in another agent's pod (same office only).
+     * Cross-office access is rejected by the server.
+     */
+    async debug(officeId, name, target, command) {
+        return this.transport.post(`${base(officeId)}/${name}/debug/${target}`, { command });
+    }
 }
 //# sourceMappingURL=agents.js.map

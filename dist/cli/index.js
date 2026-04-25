@@ -753,6 +753,29 @@ agent
     await new Promise(() => { });
 });
 agent
+    .command('debug <target> [command...]')
+    .description('Run a command in another agent\'s pod (same office only)')
+    .option('-o, --office <id>', 'Office ID')
+    .action(async (target, command, opts) => {
+    const config = loadConfig();
+    const officeId = opts.office || config.officeId;
+    const name = config.agentId;
+    if (!officeId)
+        die('No office. Run mi join first or pass --office.');
+    if (!name)
+        die('No agent identity. Run mi join first.');
+    if (!command.length)
+        die('Usage: mi agent debug <target> <command...>');
+    const cmd = command.join(' ');
+    const client = getAgentClient();
+    const result = await client.agents.debug(officeId, name, target, cmd);
+    if (result.stdout)
+        process.stdout.write(result.stdout);
+    if (result.stderr)
+        process.stderr.write(result.stderr);
+    process.exitCode = result.exitCode;
+});
+agent
     .command('clone <code>')
     .description('Clone yourself into another office as a full K8s pod')
     .option('-n, --name <name>', 'Override clone name')

@@ -29,5 +29,14 @@ export declare class AgentsAPI {
     lifecycle(officeId: string, name: string, action: 'stop' | 'start' | 'restart'): Promise<void>;
     /** Rotate agent credentials (signing key + IAM). */
     rotateCredentials(officeId: string, name: string): Promise<void>;
+    /**
+     * Execute a debug command in another agent's pod (same office only).
+     * Cross-office access is rejected by the server.
+     */
+    debug(officeId: string, name: string, target: string, command: string | string[]): Promise<{
+        stdout: string;
+        stderr: string;
+        exitCode: number;
+    }>;
 }
 //# sourceMappingURL=agents.d.ts.map
