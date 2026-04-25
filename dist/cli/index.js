@@ -719,11 +719,33 @@ agent
     .command('heartbeat-daemon')
     .description('Send heartbeats every 30s (keeps agent online)')
     .option('-i, --interval <ms>', 'Interval in ms', '30000')
+    .option('-q, --quiet', 'Suppress startup message (for systemd)')
     .action(async (opts) => {
-    const client = getAgentClient();
+    const config = loadConfig();
     const interval = parseInt(opts.interval, 10);
-    console.log(`Heartbeat daemon started (every ${interval / 1000}s). Ctrl+C to stop.`);
-    client.heartbeat.start(interval);
+    // Resolve office-manager endpoint for direct heartbeat
+    const omUrl = config.officeManagerUrl || config.endpoint;
+    const client = new OS1Client({
+        endpoint: omUrl,
+        auth: { type: 'token', token: config.key },
+        signingKey: config.privateKey,
+        agentId: config.agentId,
+        officeId: config.officeId,
+        xmtpGroupId: config.xmtpGroupId,
+    });
+    if (config.officeId && config.agentId) {
+        client.heartbeat.startDirect({
+            officeId: config.officeId,
+            agentId: config.agentId,
+            intervalMs: interval,
+        });
+    }
+    else {
+        client.heartbeat.start(interval);
+    }
+    if (!opts.quiet) {
+        console.log(`Heartbeat daemon started (every ${interval / 1000}s, direct to ${omUrl}). Ctrl+C to stop.`);
+    }
     process.on('SIGINT', () => {
         client.heartbeat.stop();
         process.exit(0);
@@ -819,6 +841,11 @@ agent
         die(err.message ?? err.error ?? `Join failed (${joinResp.status})`);
     }
     const join = (await joinResp.json());
+    // Derive office-manager URL: if the user passed the dashboard endpoint,
+    // map it to the office-manager API. Otherwise assume endpoint IS office-manager.
+    const officeManagerUrl = endpoint.includes('m.mitosislabs.ai')
+        ? endpoint
+        : endpoint.replace(/^(https?:\/\/)([^/]+)/, '$1m.$2').replace('m.www.', 'm.');
     saveConfig({
         endpoint,
         key: join.api_key,
@@ -827,6 +854,7 @@ agent
         publicKey: kp.publicKey,
         privateKey: kp.privateKey,
         xmtpGroupId: join.xmtp?.office_group_id,
+        officeManagerUrl,
     });
     console.log(`✓ Joined office ${join.office_id} as "${join.agent_name}"`);
     if (join.xmtp?.registered) {
@@ -834,15 +862,33 @@ agent
     }
     // ── Step 2: Heartbeat ───────────────────────────────────────
     const client = new OS1Client({
-        endpoint,
+        endpoint: officeManagerUrl,
         auth: { type: 'token', token: join.api_key },
         signingKey: kp.privateKey,
         agentId: join.agent_name,
         officeId: join.office_id,
         xmtpGroupId: join.xmtp?.office_group_id,
     });
-    client.heartbeat.start(30_000);
-    console.log(`✓ Heartbeat daemon started (every 30s)`);
+    client.heartbeat.startDirect({
+        officeId: join.office_id,
+        agentId: join.agent_name,
+    });
+    console.log(`✓ Heartbeat started (direct to ${officeManagerUrl})`);
+    // ── Step 2b: Install persistent heartbeat service ──────────
+    try {
+        const { installHeartbeatService } = await import('../agent/install-heartbeat-service.js');
+        const svcResult = installHeartbeatService();
+        if (svcResult.success) {
+            console.log(`✓ Heartbeat service installed (${svcResult.method})`);
+        }
+        else {
+            console.log(`  ⚠ Heartbeat service: ${svcResult.error || 'failed'}`);
+            console.log(`    Run 'mi agent heartbeat-daemon' manually to keep online.`);
+        }
+    }
+    catch (err) {
+        console.log(`  ⚠ Could not install heartbeat service: ${err.message}`);
+    }
     // ── Step 3: Install XMTP channel on the agent's gateway ─────
     //    The agent connects directly to the XMTP network using its
     //    own keypair. After install + restart, the gateway handles
