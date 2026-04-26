@@ -936,6 +936,172 @@ agent
 
 // ─── agent onboard (unified flow) ──────────────────────────────────────────
 
+// ─── Provider catalog (matches office-manager's providerConfigs) ───────────
+const PROVIDER_CATALOG: Record<string, { api: string; auth: string; baseUrl: string; integrationId: string | null; envVar: string }> = {
+  'google': { api: 'google-generative-ai', auth: 'api-key', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', integrationId: 'google-gemini', envVar: 'GEMINI_API_KEY' },
+  'openai-codex': { api: 'responses', auth: 'api-key', baseUrl: 'https://api.openai.com/v1', integrationId: 'openai-codex', envVar: 'OPENAI_API_KEY' },
+  'anthropic': { api: 'anthropic', auth: 'api-key', baseUrl: 'https://api.anthropic.com', integrationId: 'claude-code', envVar: 'ANTHROPIC_API_KEY' },
+  'amazon-bedrock': { api: 'bedrock-converse-stream', auth: 'aws-sdk', baseUrl: 'https://bedrock-runtime.us-east-2.amazonaws.com', integrationId: null, envVar: 'AWS_ACCESS_KEY_ID' },
+};
+
+function findGatewayConfig(): string | null {
+  const home = homedir();
+  for (const p of [
+    pathJoin(home, '.clawdbot', 'clawdbot.json'),
+    pathJoin(home, '.openclaw', 'openclaw.json'),
+    pathJoin(home, '.openclaw', '.openclaw', 'openclaw.json'),
+  ]) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+function updateGatewayModel(provider: string, modelId: string, envVars: Record<string, string>): void {
+  const cfgPath = findGatewayConfig();
+  if (!cfgPath) die('No gateway config found (clawdbot.json or openclaw.json)');
+
+  const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+  const prov = PROVIDER_CATALOG[provider];
+  if (!prov) die(`Unknown provider: ${provider}. Known: ${Object.keys(PROVIDER_CATALOG).join(', ')}`);
+
+  // Update model
+  cfg.models = cfg.models || {};
+  cfg.models.providers = cfg.models.providers || {};
+  cfg.models.providers[provider] = {
+    api: prov.api, auth: prov.auth, baseUrl: prov.baseUrl,
+    models: [{ id: modelId, name: modelId.split('/').pop() || modelId, contextWindow: 200000, maxTokens: 8192 }],
+  };
+  cfg.agents = cfg.agents || {};
+  cfg.agents.defaults = cfg.agents.defaults || {};
+  cfg.agents.defaults.model = { primary: `${provider}/${modelId}`, fallbacks: [] };
+
+  writeFileSync(cfgPath, JSON.stringify(cfg, null, 4));
+
+  // Write env vars to a file the gateway can source
+  const envPath = cfgPath.replace(/\.json$/, '.env');
+  const envLines = Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
+  writeFileSync(envPath, envLines, { mode: 0o600 });
+
+  // Also export to current process (for systemd env override)
+  for (const [k, v] of Object.entries(envVars)) {
+    process.env[k] = v;
+  }
+}
+
+async function restartGateway(): Promise<boolean> {
+  const { execSync } = await import('node:child_process');
+  try {
+    execSync('sudo systemctl restart clawdbot 2>/dev/null || sudo systemctl restart openclaw 2>/dev/null || pkill -HUP clawdbot 2>/dev/null || pkill -HUP openclaw 2>/dev/null', { stdio: 'pipe' });
+    return true;
+  } catch { return false; }
+}
+
+// ─── mi agent models ──────────────────────────────────────────────────────
+agent
+  .command('models')
+  .description('List available LLM models from office')
+  .option('-p, --provider <provider>', 'Filter by provider')
+  .action(async (opts: { provider?: string }) => {
+    const config = loadConfig();
+    const officeId = config.officeId;
+    if (!officeId) die('No office. Run mi join first.');
+    const client = getAgentClient();
+
+    const providers = opts.provider ? [opts.provider] : Object.keys(PROVIDER_CATALOG);
+    for (const prov of providers) {
+      try {
+        const models = await client.transport.get<{ id: string; name: string }[]>(
+          `/api/v1/offices/${officeId}/provider-models`, { provider: prov }
+        );
+        if (models && models.length > 0) {
+          console.log(`\n${prov}:`);
+          for (const m of models) console.log(`  ${prov}/${m.id}`);
+        }
+      } catch { /* provider not available */ }
+    }
+  });
+
+// ─── mi agent use-model ───────────────────────────────────────────────────
+agent
+  .command('use-model <model>')
+  .description('Switch LLM model (fetches key from office, updates gateway)')
+  .action(async (model: string) => {
+    const config = loadConfig();
+    const officeId = config.officeId;
+    const agentId = config.agentId;
+    if (!officeId || !agentId) die('No office/agent. Run mi join first.');
+
+    // Parse provider/modelId
+    const slash = model.indexOf('/');
+    if (slash < 0) die('Format: <provider>/<modelId> (e.g. google/gemini-2.5-flash)');
+    const provider = model.substring(0, slash);
+    const modelId = model.substring(slash + 1);
+
+    const prov = PROVIDER_CATALOG[provider];
+    if (!prov) die(`Unknown provider: ${provider}. Known: ${Object.keys(PROVIDER_CATALOG).join(', ')}`);
+    if (!prov.integrationId) die(`Provider ${provider} uses IAM credentials, not API keys. Configure via AWS CLI.`);
+
+    const omUrl = config.officeManagerUrl || 'https://m.mitosislabs.ai';
+    const client = new OS1Client({
+      endpoint: omUrl,
+      auth: { type: 'token', token: config.key },
+      signingKey: config.privateKey,
+      agentId: config.agentId,
+      officeId: config.officeId,
+    });
+
+    // 1. Enable integration
+    console.log(`Enabling ${prov.integrationId}...`);
+    try {
+      await client.transport.post(`/api/v1/offices/${officeId}/integrations/${prov.integrationId}/agents/${agentId}`, { enabled: true });
+      console.log(`✓ Integration enabled`);
+    } catch (e: any) {
+      console.log(`  ⚠ Enable: ${e.message} (may already be enabled)`);
+    }
+
+    // 2. Fetch credentials
+    console.log(`Fetching credentials...`);
+    let envVars: Record<string, string> = {};
+    try {
+      const creds = await client.transport.get<{ envVars: Record<string, string> }>(
+        `/api/v1/offices/${officeId}/integrations/${prov.integrationId}/agents/${agentId}/credentials`
+      );
+      envVars = creds.envVars || {};
+      const keyName = Object.keys(envVars).find(k => k.includes('API_KEY') || k.includes('TOKEN')) || Object.keys(envVars)[0];
+      if (keyName && envVars[keyName]) {
+        console.log(`✓ Got ${keyName}`);
+      } else {
+        console.log(`  ⚠ No API key in credentials — integration may not be configured in office`);
+      }
+    } catch (e: any) {
+      die(`Failed to fetch credentials: ${e.message}`);
+    }
+
+    // 3. Update gateway config
+    console.log(`Updating gateway config...`);
+    updateGatewayModel(provider, modelId, envVars);
+    console.log(`✓ Model set to ${provider}/${modelId}`);
+
+    // 4. Restart gateway
+    console.log(`Restarting gateway...`);
+    if (await restartGateway()) {
+      console.log(`✓ Gateway restarted`);
+    } else {
+      console.log(`  ⚠ Could not restart gateway — restart manually`);
+    }
+
+    // 5. Save to config
+    const cfg = peekConfig();
+    if (cfg) {
+      (cfg as any).currentModel = model;
+      saveConfig(cfg as Config);
+    }
+
+    console.log(`\n✓ Now using ${model}`);
+  });
+
+// ─── agent onboard (unified flow) ──────────────────────────────────────────
+
 agent
   .command('onboard <codeOrUrl>')
   .description('Full onboarding: join → heartbeat → clone → chat (one command)')
