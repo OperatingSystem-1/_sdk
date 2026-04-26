@@ -27,6 +27,10 @@ interface Config {
   privateKey?: string;
   xmtpGroupId?: string;
   officeManagerUrl?: string;
+  officeXmtpAddress?: string;
+  heartbeatServiceInstalled?: boolean;
+  xmtpChannelInstalled?: boolean;
+  replyBridgeInstalled?: boolean;
 }
 
 program
@@ -793,7 +797,7 @@ agent
       office_id: string;
       api_key: string;
       agent_name: string;
-      xmtp?: { office_group_id?: string; registered?: boolean };
+      xmtp?: { office_group_id?: string; office_xmtp_address?: string; registered?: boolean };
     };
 
     saveConfig({
@@ -989,7 +993,7 @@ agent
       office_id: string;
       api_key: string;
       agent_name: string;
-      xmtp?: { office_group_id?: string; registered?: boolean };
+      xmtp?: { office_group_id?: string; office_xmtp_address?: string; registered?: boolean };
     };
 
     // Derive office-manager URL: if the user passed the dashboard endpoint,
@@ -1007,6 +1011,7 @@ agent
       privateKey: kp.privateKey,
       xmtpGroupId: join.xmtp?.office_group_id,
       officeManagerUrl,
+      officeXmtpAddress: join.xmtp?.office_xmtp_address,
     });
 
     console.log(`✓ Joined office ${join.office_id} as "${join.agent_name}"`);
@@ -1036,6 +1041,8 @@ agent
       const svcResult = installHeartbeatService();
       if (svcResult.success) {
         console.log(`✓ Heartbeat service installed (${svcResult.method})`);
+        const cfg = peekConfig();
+        if (cfg) { cfg.heartbeatServiceInstalled = true; saveConfig(cfg as Config); }
       } else {
         console.log(`  ⚠ Heartbeat service: ${svcResult.error || 'failed'}`);
         console.log(`    Run 'mi agent heartbeat-daemon' manually to keep online.`);
@@ -1064,6 +1071,8 @@ agent
         if (installResult.gatewayRestarted) {
           console.log(`✓ Gateway restarted — agent can now chat on XMTP`);
         }
+        const cfg = peekConfig();
+        if (cfg) { cfg.xmtpChannelInstalled = true; saveConfig(cfg as Config); }
       } else {
         console.log(`  ⚠ XMTP install: ${installResult.error || 'partial'}`);
       }
@@ -1084,7 +1093,7 @@ agent
       const { installReplyBridge } = await import('../agent/install-reply-bridge.js');
       const bridgeResult = await installReplyBridge({
         privateKey: kp.privateKey,
-        officeXmtpAddress: '0x82ced602e34ac461cfd4d63d5aea992c0da8f496', // TODO: get from join response
+        officeXmtpAddress: join.xmtp?.office_xmtp_address || '',
         agentName: join.agent_name,
         xmtpDbPath: `${process.env.HOME || '/home/ubuntu'}/.clawdbot/agents/default/xmtp-db`,
         sessionsDir: `${process.env.HOME || '/home/ubuntu'}/.clawdbot/agents/main/sessions`,
@@ -1092,6 +1101,8 @@ agent
       });
       if (bridgeResult.success) {
         console.log(`✓ Reply bridge installed (${bridgeResult.method})`);
+        const cfg = peekConfig();
+        if (cfg) { cfg.replyBridgeInstalled = true; saveConfig(cfg as Config); }
       } else {
         console.log(`  ⚠ Reply bridge: ${bridgeResult.error}`);
       }

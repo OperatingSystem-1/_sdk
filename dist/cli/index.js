@@ -878,6 +878,7 @@ agent
         privateKey: kp.privateKey,
         xmtpGroupId: join.xmtp?.office_group_id,
         officeManagerUrl,
+        officeXmtpAddress: join.xmtp?.office_xmtp_address,
     });
     console.log(`✓ Joined office ${join.office_id} as "${join.agent_name}"`);
     if (join.xmtp?.registered) {
@@ -903,6 +904,11 @@ agent
         const svcResult = installHeartbeatService();
         if (svcResult.success) {
             console.log(`✓ Heartbeat service installed (${svcResult.method})`);
+            const cfg = peekConfig();
+            if (cfg) {
+                cfg.heartbeatServiceInstalled = true;
+                saveConfig(cfg);
+            }
         }
         else {
             console.log(`  ⚠ Heartbeat service: ${svcResult.error || 'failed'}`);
@@ -931,6 +937,11 @@ agent
             if (installResult.gatewayRestarted) {
                 console.log(`✓ Gateway restarted — agent can now chat on XMTP`);
             }
+            const cfg = peekConfig();
+            if (cfg) {
+                cfg.xmtpChannelInstalled = true;
+                saveConfig(cfg);
+            }
         }
         else {
             console.log(`  ⚠ XMTP install: ${installResult.error || 'partial'}`);
@@ -952,7 +963,7 @@ agent
         const { installReplyBridge } = await import('../agent/install-reply-bridge.js');
         const bridgeResult = await installReplyBridge({
             privateKey: kp.privateKey,
-            officeXmtpAddress: '0x82ced602e34ac461cfd4d63d5aea992c0da8f496', // TODO: get from join response
+            officeXmtpAddress: join.xmtp?.office_xmtp_address || '',
             agentName: join.agent_name,
             xmtpDbPath: `${process.env.HOME || '/home/ubuntu'}/.clawdbot/agents/default/xmtp-db`,
             sessionsDir: `${process.env.HOME || '/home/ubuntu'}/.clawdbot/agents/main/sessions`,
@@ -960,6 +971,11 @@ agent
         });
         if (bridgeResult.success) {
             console.log(`✓ Reply bridge installed (${bridgeResult.method})`);
+            const cfg = peekConfig();
+            if (cfg) {
+                cfg.replyBridgeInstalled = true;
+                saveConfig(cfg);
+            }
         }
         else {
             console.log(`  ⚠ Reply bridge: ${bridgeResult.error}`);
