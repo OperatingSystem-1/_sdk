@@ -46,6 +46,23 @@ mi agents get <officeId> aria
 mi agents fire <officeId> aria
 mi agents logs <officeId> aria
 
+mi env list --office <officeId>
+mi env set --office <officeId> KEY=value
+mi env delete --office <officeId> KEY
+
+mi tasks list --office <officeId>
+mi tasks create --office <officeId> --title "Research competitors"
+mi tasks get --office <officeId> <taskId>
+
+mi files list --office <officeId>
+mi files push --office <officeId> ./report.md
+mi files pull --office <officeId> report.md
+
+mi integrations list --office <officeId>
+mi integrations models --office <officeId> --provider google
+
+mi chat --office <officeId> <agentName> "Hello"
+
 mi api GET /api/v1/offices
 ```
 
@@ -85,10 +102,41 @@ client.agents.activity(officeId, name, { limit?, category? })
 ### Integrations
 
 ```typescript
-client.integrations.listModels(officeId)
-client.integrations.setSecret(officeId, integrationId, key)
-client.integrations.deleteSecret(officeId, integrationId)
-client.integrations.toggleAgent(officeId, integrationId, agentName, enabled)
+client.integrations.listOffice(officeId)                         // all office integrations
+client.integrations.listModels(officeId, provider?)              // available LLM models
+client.integrations.myIntegrations(officeId, agentName)          // my enabled integrations
+client.integrations.setSecret(officeId, integrationId, data)     // set credentials
+client.integrations.deleteSecret(officeId, integrationId)        // remove credentials
+client.integrations.toggleAgent(officeId, integrationId, agent, enabled)  // enable/disable
+client.integrations.proxy(officeId, integrationId, path, opts?)  // call integration API (no creds exposed)
+client.integrations.getCredentials(officeId, integrationId)      // get credentials (remote agents)
+```
+
+### Tasks
+
+```typescript
+client.tasks.create(officeId, { title, kind?, assignedAgent?, priority? })
+client.tasks.list(officeId, { status?, limit? })
+client.tasks.get(officeId, taskId)
+client.tasks.stats(officeId)
+```
+
+### Files
+
+```typescript
+client.files.list(officeId)
+client.files.upload(officeId, file)
+client.files.download(officeId, filename)
+client.files.delete(officeId, filename)
+client.files.changes(officeId, since?)
+```
+
+### Environment
+
+```typescript
+client.env.list(officeId)
+client.env.set(officeId, key, value)
+client.env.delete(officeId, key)
 ```
 
 ### External Agents
