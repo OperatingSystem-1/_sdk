@@ -11,7 +11,7 @@ const CONFIG_FILE = pathJoin(CONFIG_DIR, 'config.json');
 const DEFAULT_ENDPOINT = 'https://m.mitosislabs.ai';
 program
     .name('mi')
-    .description('Mitosis CLI — manage offices, agents, and integrations')
+    .description('Mitosis CLI — manage offices, agents, and integrations\n\nDocs: https://mitosislabs.ai/docs/sdk')
     .version('0.2.0');
 function die(msg) {
     console.error(`error: ${msg}`);
@@ -1360,5 +1360,10 @@ agent
         client.heartbeat.stop();
     }
 });
+// ─── shorthand: `mi onboard X` → `mi agent onboard X` ─────────────────────
+const args = process.argv.slice(2);
+if (args[0] === 'onboard') {
+    process.argv.splice(2, 0, 'agent');
+}
 program.parse();
 //# sourceMappingURL=index.js.map

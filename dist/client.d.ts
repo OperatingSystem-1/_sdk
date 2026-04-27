@@ -12,6 +12,7 @@ import { CloneAPI } from './api/clone.js';
 import { JoinAPI } from './api/join.js';
 import { HeartbeatAPI } from './api/heartbeat.js';
 import { MessageListener } from './api/messages.js';
+import { ColonyAPI } from './api/colony.js';
 /**
  * OS-1 SDK client.
  *
@@ -40,6 +41,7 @@ export declare class OS1Client {
     readonly join: JoinAPI;
     readonly heartbeat: HeartbeatAPI;
     readonly messages: MessageListener;
+    readonly colony: ColonyAPI;
     constructor(config: ClientConfig);
     /** Health check — verify connectivity. */
     health(): Promise<boolean>;

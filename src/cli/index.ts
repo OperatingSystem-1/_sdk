@@ -1502,4 +1502,10 @@ agent
     }
   });
 
+// ─── shorthand: `mi onboard X` → `mi agent onboard X` ─────────────────────
+const args = process.argv.slice(2);
+if (args[0] === 'onboard') {
+  process.argv.splice(2, 0, 'agent');
+}
+
 program.parse();
