@@ -208,11 +208,14 @@ export interface EnvVar {
 
 // ─── Tasks ──────────────────────────────────────────────────────────────────
 
+export type TaskStatus = 'queued' | 'claimed' | 'running' | 'blocked' | 'done' | 'failed' | 'cancelled';
+export type TaskKind = 'general' | 'code' | 'research' | 'browser' | 'review' | 'verify';
+
 export interface CreateTaskRequest {
   title: string;
   description?: string;
   priority?: number;
-  kind?: string;
+  kind?: TaskKind;
   requestedBy?: string;
   assignedAgent?: string;
   parentId?: number;
@@ -225,8 +228,8 @@ export interface Task {
   title: string;
   description?: string;
   priority?: number;
-  kind?: string;
-  status: string;
+  kind?: TaskKind;
+  status: TaskStatus;
   claimedBy?: string;
   assignedAgent?: string;
   requestedBy?: string;
