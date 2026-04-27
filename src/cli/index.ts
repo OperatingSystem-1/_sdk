@@ -100,10 +100,10 @@ function getAgentClientAt(endpoint: string): OS1Client {
   });
 }
 
-/** Resolve officeId from --office flag or saved config. */
-function getOfficeId(opts: { office?: string }): string {
-  const id = opts.office || loadConfig().officeId;
-  if (!id) die('No office. Run mi join first or pass --office.');
+/** Resolve officeId from --colony/--office flag or saved config. */
+function getOfficeId(opts: { office?: string; colony?: string }): string {
+  const id = opts.colony || opts.office || loadConfig().officeId;
+  if (!id) die('No colony. Run mi join first or pass --colony.');
   return id;
 }
 
@@ -279,7 +279,8 @@ const agentCmd = program.command('agents').description('Agent management');
 
 agentCmd
   .command('list')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('-e, --endpoint <url>', 'Office-manager endpoint override (dev/prod)')
   .action(async (opts: { office?: string; endpoint?: string }) => {
     const endpoint = opts.endpoint || loadConfig().endpoint;
@@ -288,7 +289,8 @@ agentCmd
 
 agentCmd
   .command('hire')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .requiredOption('-n, --name <name>', 'Agent name')
   .option('-r, --role <role>', 'Role')
   .option('-m, --model <tier>', 'Model tier (opus/sonnet/haiku)')
@@ -305,7 +307,8 @@ agentCmd
   });
 
 agentCmd.command('get <name>')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('-e, --endpoint <url>', 'Office-manager endpoint override (dev/prod)')
   .action(async (name, opts: { office?: string; endpoint?: string }) => {
     const endpoint = opts.endpoint || loadConfig().endpoint;
@@ -313,7 +316,8 @@ agentCmd.command('get <name>')
 });
 
 agentCmd.command('fire <name>')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('-e, --endpoint <url>', 'Office-manager endpoint override (dev/prod)')
   .action(async (name, opts: { office?: string; endpoint?: string }) => {
     const endpoint = opts.endpoint || loadConfig().endpoint;
@@ -323,7 +327,8 @@ agentCmd.command('fire <name>')
 
 agentCmd
   .command('activity <name>')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('-l, --limit <n>', 'Limit', '20')
   .action(async (name, opts) => {
     jsonOut(
@@ -338,7 +343,8 @@ agentCmd
 program
   .command('logs <name>')
   .description('Tail agent logs')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('-t, --tail <n>', 'Lines', '100')
   .option('-f, --follow', 'Follow (poll every 3s)')
   .action(async (name, opts) => {
@@ -382,7 +388,8 @@ program
 program
   .command('restart <name>')
   .description('Restart an agent pod')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (name, opts) => {
     await getClient().agents.lifecycle(getOfficeId(opts), name, 'restart');
     console.log(`Restarted ${name}`);
@@ -391,7 +398,8 @@ program
 program
   .command('stop <name>')
   .description('Stop an agent pod')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (name, opts) => {
     await getClient().agents.lifecycle(getOfficeId(opts), name, 'stop');
     console.log(`Stopped ${name}`);
@@ -400,7 +408,8 @@ program
 program
   .command('start <name>')
   .description('Start a stopped agent pod')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (name, opts) => {
     await getClient().agents.lifecycle(getOfficeId(opts), name, 'start');
     console.log(`Started ${name}`);
@@ -411,7 +420,8 @@ program
 program
   .command('error <name>')
   .description('Show last error for an agent')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (name, opts) => {
     const result = await getClient().agents.lastError(getOfficeId(opts), name);
     if (result.error) {
@@ -427,7 +437,8 @@ const envCmd = program.command('env').description('Environment variables');
 
 envCmd
   .command('list')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('-v, --values', 'Include values')
   .action(async (opts) => {
     const client = getClient();
@@ -448,7 +459,8 @@ envCmd
 
 envCmd
   .command('set <key> <value>')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('-a, --agent <name>', 'Agent-scoped')
   .action(async (key, value, opts) => {
     await getClient().env.set(getOfficeId(opts), key, value, {
@@ -460,7 +472,8 @@ envCmd
 
 envCmd
   .command('delete <key>')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (key, opts) => {
     await getClient().env.delete(getOfficeId(opts), key);
     console.log(`Deleted ${key}`);
@@ -469,7 +482,8 @@ envCmd
 envCmd
   .command('agent <name>')
   .description('Show env vars for a specific agent')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (name, opts) => {
     const vars = await getClient().env.getAgentEnv(getOfficeId(opts), name);
     if (!vars.length) {
@@ -487,7 +501,8 @@ const taskCmd = program.command('tasks').description('Task queue');
 
 taskCmd
   .command('list')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('-s, --status <status>', 'Filter by status')
   .option('-l, --limit <n>', 'Limit', '20')
   .action(async (opts) => {
@@ -508,7 +523,8 @@ taskCmd
 
 taskCmd
   .command('create')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .requiredOption('-t, --title <title>', 'Task title')
   .option('-d, --desc <description>', 'Description')
   .option('-p, --priority <n>', 'Priority (0-10)')
@@ -525,14 +541,16 @@ taskCmd
 
 taskCmd
   .command('get <taskId>')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (taskId, opts) => {
     jsonOut(await getClient().tasks.get(getOfficeId(opts), taskId));
   });
 
 taskCmd
   .command('stats')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (opts) => {
     jsonOut(await getClient().tasks.stats(getOfficeId(opts)));
   });
@@ -543,7 +561,8 @@ const fileCmd = program.command('files').description('Shared drive');
 
 fileCmd
   .command('list')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (opts) => {
     const files = await getClient().files.list(getOfficeId(opts));
     if (!files.length) {
@@ -564,7 +583,8 @@ fileCmd
 fileCmd
   .command('push <localPath>')
   .description('Upload a local file to the shared drive')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('-n, --name <remoteName>', 'Remote filename (default: local basename)')
   .action(async (localPath, opts) => {
     const data = readFileSync(localPath);
@@ -576,7 +596,8 @@ fileCmd
 fileCmd
   .command('pull <remoteName>')
   .description('Download a file from the shared drive')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('--out <localPath>', 'Local output path (default: ./<remoteName>)')
   .action(async (remoteName, opts) => {
     const resp = await getClient().files.download(getOfficeId(opts), remoteName);
@@ -589,7 +610,8 @@ fileCmd
 fileCmd
   .command('rm <remoteName>')
   .description('Delete a file from the shared drive')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (remoteName, opts) => {
     await getClient().files.delete(getOfficeId(opts), remoteName);
     console.log(`Deleted ${remoteName}`);
@@ -600,7 +622,8 @@ fileCmd
 program
   .command('invite')
   .description('Create an invite code for this office')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (opts) => {
     const result = await getClient().invites.create(getOfficeId(opts));
     console.log(`Code:  ${result.code}`);
@@ -612,7 +635,8 @@ program
 program
   .command('chat [target]')
   .description('Open direct XMTP chat or the saved office group chat')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (target: string | undefined, opts: { office?: string }) => {
     const config = loadConfig();
     const officeId = opts.office || config.officeId;
@@ -699,7 +723,8 @@ const integ = program.command('integrations').description('Integration managemen
 
 integ
   .command('list')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .option('-e, --endpoint <url>', 'Dashboard endpoint (dev/prod override)')
   .action(async (opts: { office?: string; endpoint?: string }) => {
     const endpoint = opts.endpoint || loadConfig().endpoint;
@@ -708,7 +733,8 @@ integ
 
 integ
   .command('models')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (opts) => {
     jsonOut(await getClient().integrations.listModels(getOfficeId(opts)));
   });
@@ -881,7 +907,8 @@ agent
 agent
   .command('debug <target> [command...]')
   .description('Run a command in another agent\'s pod (same office only)')
-  .option('-o, --office <id>', 'Office ID')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>', 'Colony ID (alias)')
   .action(async (target: string, command: string[], opts: { office?: string }) => {
     const config = loadConfig();
     const officeId = opts.office || config.officeId;
