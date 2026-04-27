@@ -1154,11 +1154,12 @@ agent
   .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
   .option('--no-clone', 'Join only — skip cloning into a K8s pod')
   .option('--no-chat', 'Skip interactive chat after onboarding')
+  .option('-s, --statement <text>', 'Application statement (required for gated invites)')
   .option('--state-dir <path>', 'Directory containing agent state to transfer to clone')
   .option('--runtime-dir <path>', 'Agent runtime directory (parent of clawdbot.json, e.g. ~/.clawdbot)')
   .option('--exclude <dirs>', 'Comma-separated directories to exclude from transfer', '')
   .option('--no-transfer', 'Clone without state transfer (empty pod)')
-  .action(async (codeOrUrl: string, opts: { name?: string; endpoint: string; clone: boolean; chat: boolean; stateDir?: string; runtimeDir?: string; exclude: string; transfer: boolean }) => {
+  .action(async (codeOrUrl: string, opts: { name?: string; endpoint: string; clone: boolean; chat: boolean; statement?: string; stateDir?: string; runtimeDir?: string; exclude: string; transfer: boolean }) => {
     const endpoint = opts.endpoint;
     const code = extractInviteCode(codeOrUrl);
     const agentName = opts.name || `agent-${Date.now().toString(36)}`;
@@ -1171,9 +1172,6 @@ agent
     console.log(`✓ Identity: ${kp.address}`);
 
     // ── Step 0b: Initialize XMTP identity on the network ────────
-    // The agent must exist on the XMTP network before the office
-    // admin can add it to the group. Creating the client registers
-    // the signing key with the XMTP network.
     try {
       const { getXmtpClient } = await import('../xmtp/client.js');
       await getXmtpClient({ signingKey: kp.privateKey } as any);
@@ -1194,18 +1192,92 @@ agent
       }),
     });
 
-    if (!joinResp.ok) {
-      const err = (await joinResp.json().catch(() => ({}))) as { error?: string; message?: string };
-      die(err.message ?? err.error ?? `Join failed (${joinResp.status})`);
-    }
-
-    const join = (await joinResp.json()) as {
+    // Handle application-required flow (202) or direct join
+    let join: {
       bot_id: string;
       office_id: string;
       api_key: string;
       agent_name: string;
       xmtp?: { office_group_id?: string; office_xmtp_address?: string; registered?: boolean };
     };
+
+    if (joinResp.status === 202) {
+      const gateResult = (await joinResp.json()) as { error?: string; message?: string };
+      if (gateResult.error !== 'application_required') {
+        die(gateResult.message ?? gateResult.error ?? `Unexpected 202 response`);
+      }
+
+      const statement = opts.statement || `${agentName} would like to join Agent University to collaborate with other agents and learn new capabilities.`;
+      console.log(`This office requires an application.`);
+      console.log(`  Statement: "${statement}"\n`);
+
+      // Submit application
+      const applyResp = await fetch(`${endpoint}/api/agents/join/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          agent_name: agentName,
+          public_key: kp.publicKey,
+          xmtp_address: kp.address,
+          statement,
+        }),
+      });
+
+      if (!applyResp.ok) {
+        const err = (await applyResp.json().catch(() => ({}))) as { error?: string; message?: string };
+        die(err.message ?? err.error ?? `Application failed (${applyResp.status})`);
+      }
+
+      const applyResult = (await applyResp.json()) as { application_id: string; status: string; message: string };
+      console.log(`✓ Application submitted (${applyResult.application_id})`);
+      console.log(`  Waiting for approval... (polling every 10s, Ctrl+C to detach)\n`);
+
+      // Poll for approval
+      const appId = applyResult.application_id;
+      let approved = false;
+      for (let i = 0; i < 360; i++) {
+        await new Promise(r => setTimeout(r, 10000));
+        try {
+          const pollResp = await fetch(`${endpoint}/api/agents/join/apply?id=${appId}`);
+          const pollResult = (await pollResp.json()) as { status: string };
+          if (pollResult.status === 'approved') {
+            console.log(`\n✓ Application approved!\n`);
+            approved = true;
+            break;
+          } else if (pollResult.status === 'rejected') {
+            die('Application was rejected.');
+          }
+          process.stdout.write('.');
+        } catch { process.stdout.write('x'); }
+      }
+
+      if (!approved) die('Timed out waiting for approval.');
+
+      // Re-attempt join now that we're approved
+      const retryResp = await fetch(`${endpoint}/api/agents/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          agent_name: agentName,
+          public_key: kp.publicKey,
+          xmtp_address: kp.address,
+        }),
+      });
+
+      if (!retryResp.ok) {
+        const err = (await retryResp.json().catch(() => ({}))) as { error?: string; message?: string };
+        die(err.message ?? err.error ?? `Join after approval failed (${retryResp.status})`);
+      }
+
+      join = await retryResp.json();
+    } else if (!joinResp.ok) {
+      const err = (await joinResp.json().catch(() => ({}))) as { error?: string; message?: string };
+      die(err.message ?? err.error ?? `Join failed (${joinResp.status})`);
+    } else {
+      join = await joinResp.json();
+    }
 
     // Derive office-manager URL: if the user passed the dashboard endpoint,
     // map it to the office-manager API. Otherwise assume endpoint IS office-manager.
