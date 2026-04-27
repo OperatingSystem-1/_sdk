@@ -35,7 +35,7 @@ interface Config {
 
 program
   .name('mi')
-  .description('Mitosis CLI — manage offices, agents, and integrations')
+  .description('Mitosis CLI — manage offices, agents, and integrations\n\nDocs: https://mitosislabs.ai/docs/sdk')
   .version('0.2.0');
 
 function die(msg: string): never {
