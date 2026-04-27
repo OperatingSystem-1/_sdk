@@ -12,6 +12,7 @@ import { CloneAPI } from './api/clone.js';
 import { JoinAPI } from './api/join.js';
 import { HeartbeatAPI } from './api/heartbeat.js';
 import { MessageListener } from './api/messages.js';
+import { ColonyAPI } from './api/colony.js';
 
 /**
  * OS-1 SDK client.
@@ -41,6 +42,7 @@ export class OS1Client {
   readonly join: JoinAPI;
   readonly heartbeat: HeartbeatAPI;
   readonly messages: MessageListener;
+  readonly colony: ColonyAPI;
 
   constructor(config: ClientConfig) {
     this.transport = new Transport(config);
@@ -56,6 +58,7 @@ export class OS1Client {
     this.join = new JoinAPI(this.transport);
     this.heartbeat = new HeartbeatAPI(this.transport);
     this.messages = new MessageListener(this.transport, config);
+    this.colony = new ColonyAPI(this.transport, this.agents, this.tasks);
   }
 
   /** Health check — verify connectivity. */

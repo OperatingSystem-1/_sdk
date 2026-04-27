@@ -83,6 +83,10 @@ export interface HireAgentRequest {
   modelTier?: string;
   skills?: string[];
   env?: Record<string, string>;
+  systemPrompt?: string;
+  chromium?: boolean;
+  provider?: string;
+  integrations?: Record<string, boolean>;
 }
 
 export interface UpdateAgentRequest {
@@ -210,6 +214,10 @@ export interface CreateTaskRequest {
   priority?: number;
   kind?: string;
   requestedBy?: string;
+  assignedAgent?: string;
+  parentId?: number;
+  dependsOn?: string;
+  requiredTools?: string[];
 }
 
 export interface Task {
@@ -220,10 +228,92 @@ export interface Task {
   kind?: string;
   status: string;
   claimedBy?: string;
+  assignedAgent?: string;
   requestedBy?: string;
+  parentId?: number;
+  dependsOn?: string;
+  resultSummary?: string;
   createdAt: string;
   updatedAt?: string;
   completedAt?: string;
+}
+
+export interface TaskLog {
+  id: string;
+  taskId: string;
+  agent: string;
+  message: string;
+  event: string;
+  createdAt: string;
+}
+
+export interface TaskDetail {
+  task: Task;
+  logs: TaskLog[];
+}
+
+export interface TaskArtifact {
+  id: string;
+  taskId: string;
+  kind: string;
+  path: string;
+  label?: string;
+  createdAt: string;
+}
+
+export interface UpdateTaskRequest {
+  status?: string;
+  result?: string;
+  error?: string;
+  assignedAgent?: string;
+}
+
+export interface VerifyTaskRequest {
+  accepted: boolean;
+  reviewer?: string;
+  comments?: string;
+}
+
+export interface ColonyMember {
+  name: string;
+  phase: string;
+  ready: boolean;
+  tasks: Array<{ id: string; title: string; status: string; result?: string }>;
+}
+
+export interface ColonyStatus {
+  allDone: boolean;
+  summary: string;
+  members: ColonyMember[];
+  pending: number;
+  failed: number;
+  done: number;
+}
+
+export interface OrchestrateSpec {
+  title: string;
+  description?: string;
+  kind?: string;
+  subtasks: Array<{
+    title: string;
+    description?: string;
+    agentName: string;
+    role?: string;
+    systemPrompt?: string;
+    kind?: string;
+    dependsOn?: string;
+    requiredTools?: string[];
+  }>;
+  provider?: string;
+  modelTier?: string;
+  timeout?: number;
+  onSubtaskDone?: (task: Task) => void;
+}
+
+export interface OrchestrateResult {
+  parent: Task;
+  subtasks: Array<{ task: Task; agentName: string; result?: Task; status: string; error?: string }>;
+  artifacts: TaskArtifact[];
 }
 
 export interface TaskStats {
