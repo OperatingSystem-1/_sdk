@@ -937,11 +937,12 @@ agent
 // ─── agent onboard (unified flow) ──────────────────────────────────────────
 
 // ─── Provider catalog (matches office-manager's providerConfigs) ───────────
-const PROVIDER_CATALOG: Record<string, { api: string; auth: string; baseUrl: string; integrationId: string | null; envVar: string }> = {
-  'google': { api: 'google-generative-ai', auth: 'api-key', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', integrationId: 'google-gemini', envVar: 'GEMINI_API_KEY' },
-  'openai-codex': { api: 'responses', auth: 'api-key', baseUrl: 'https://api.openai.com/v1', integrationId: 'openai-codex', envVar: 'OPENAI_API_KEY' },
-  'anthropic': { api: 'anthropic', auth: 'api-key', baseUrl: 'https://api.anthropic.com', integrationId: 'claude-code', envVar: 'ANTHROPIC_API_KEY' },
-  'amazon-bedrock': { api: 'bedrock-converse-stream', auth: 'aws-sdk', baseUrl: 'https://bedrock-runtime.us-east-2.amazonaws.com', integrationId: null, envVar: 'AWS_ACCESS_KEY_ID' },
+const PROVIDER_CATALOG: Record<string, { api: string; auth: string; baseUrl: string; integrationId: string | null; envVar: string; note?: string }> = {
+  'google':        { api: 'google-generative-ai', auth: 'api-key', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', integrationId: 'google-gemini', envVar: 'GEMINI_API_KEY' },
+  'openai-codex':  { api: 'responses',            auth: 'api-key', baseUrl: 'https://api.openai.com/v1', integrationId: 'openai-codex', envVar: 'OPENAI_API_KEY', note: 'K8s agents use codex-proxy; external agents need direct API key in office secret' },
+  'anthropic':     { api: 'anthropic',             auth: 'api-key', baseUrl: 'https://api.anthropic.com', integrationId: 'claude-code', envVar: 'ANTHROPIC_API_KEY', note: 'K8s agents use claude-code-proxy; external agents need direct API key in office secret' },
+  'venice':        { api: 'openai',                auth: 'api-key', baseUrl: 'https://api.venice.ai/api/v1', integrationId: 'venice-ai', envVar: 'VENICE_API_KEY' },
+  'amazon-bedrock':{ api: 'bedrock-converse-stream',auth: 'aws-sdk', baseUrl: 'https://bedrock-runtime.us-east-2.amazonaws.com', integrationId: null, envVar: 'AWS_ACCESS_KEY_ID' },
 };
 
 function findGatewayConfig(): string | null {
@@ -964,12 +965,13 @@ function updateGatewayModel(provider: string, modelId: string, envVars: Record<s
   const prov = PROVIDER_CATALOG[provider];
   if (!prov) die(`Unknown provider: ${provider}. Known: ${Object.keys(PROVIDER_CATALOG).join(', ')}`);
 
-  // Update model
+  // Update model — replace all providers with just the selected one
   cfg.models = cfg.models || {};
-  cfg.models.providers = cfg.models.providers || {};
-  cfg.models.providers[provider] = {
-    api: prov.api, auth: prov.auth, baseUrl: prov.baseUrl,
-    models: [{ id: modelId, name: modelId.split('/').pop() || modelId, contextWindow: 200000, maxTokens: 8192 }],
+  cfg.models.providers = {
+    [provider]: {
+      api: prov.api, auth: prov.auth, baseUrl: prov.baseUrl,
+      models: [{ id: modelId, name: modelId.split('/').pop() || modelId, contextWindow: 200000, maxTokens: 8192 }],
+    },
   };
   cfg.agents = cfg.agents || {};
   cfg.agents.defaults = cfg.agents.defaults || {};
@@ -999,26 +1001,53 @@ async function restartGateway(): Promise<boolean> {
 // ─── mi agent models ──────────────────────────────────────────────────────
 agent
   .command('models')
-  .description('List available LLM models from office')
-  .option('-p, --provider <provider>', 'Filter by provider')
-  .action(async (opts: { provider?: string }) => {
+  .description('List available LLM providers and models')
+  .action(async () => {
     const config = loadConfig();
     const officeId = config.officeId;
-    if (!officeId) die('No office. Run mi join first.');
-    const client = getAgentClient();
+    const agentId = config.agentId;
+    if (!officeId || !agentId) die('No office. Run mi join first.');
+    const omUrl = config.officeManagerUrl || 'https://m.mitosislabs.ai';
+    const client = new OS1Client({
+      endpoint: omUrl,
+      auth: { type: 'token', token: config.key },
+      signingKey: config.privateKey,
+      agentId: config.agentId,
+      officeId: config.officeId,
+    });
 
-    const providers = opts.provider ? [opts.provider] : Object.keys(PROVIDER_CATALOG);
-    for (const prov of providers) {
+    console.log('Available providers:\n');
+    for (const [name, prov] of Object.entries(PROVIDER_CATALOG)) {
+      if (!prov.integrationId) {
+        console.log(`  ${name} (IAM-based — configure via AWS CLI)`);
+        continue;
+      }
+      // Check if office has credentials for this provider
+      let hasKey = false;
       try {
-        const models = await client.transport.get<{ id: string; name: string }[]>(
-          `/api/v1/offices/${officeId}/provider-models`, { provider: prov }
+        const creds = await client.transport.get<{ envVars: Record<string, string> }>(
+          `/api/v1/offices/${officeId}/integrations/${prov.integrationId}/agents/${agentId}/credentials`
         );
-        if (models && models.length > 0) {
-          console.log(`\n${prov}:`);
-          for (const m of models) console.log(`  ${prov}/${m.id}`);
-        }
-      } catch { /* provider not available */ }
+        hasKey = !!(creds.envVars && Object.values(creds.envVars).some(v => v && v.length > 0));
+      } catch { /* no credentials */ }
+
+      const status = hasKey ? 'ready' : 'no key';
+      const note = prov.note ? ` (${prov.note})` : '';
+      console.log(`  ${name} [${status}]${note}`);
+
+      // List models if provider has key
+      if (hasKey) {
+        try {
+          const models = await client.transport.get<{ id: string; name: string }[]>(
+            `/api/v1/offices/${officeId}/provider-models`, { provider: name }
+          );
+          if (models && models.length > 0) {
+            for (const m of models) console.log(`    ${name}/${m.id}`);
+          }
+        } catch { /* models not queryable */ }
+      }
     }
+    console.log(`\nSwitch with: mi agent use-model <provider>/<modelId>`);
   });
 
 // ─── mi agent use-model ───────────────────────────────────────────────────
