@@ -762,7 +762,15 @@ function getAgentClient(): OS1Client {
   });
 }
 
-const agent = program.command('agent').description('External agent operations (A2A)');
+const agent = program.command('agent').description('External agent lifecycle — onboard, heartbeat, model switching, identity')
+  .addHelpText('after', `
+Quick start:
+  mi agent onboard <invite-code>       Join an office (generates keys, starts services)
+  mi agent models                      See available LLM providers
+  mi agent use-model google/gemini-2.5-flash   Switch model
+
+Your identity (secp256k1 keypair) is stored at ~/.mi/identity.json.
+Config at ~/.mi/config.json. All API calls are cryptographically signed.`);
 
 agent
   .command('join <codeOrUrl>')
@@ -1001,7 +1009,7 @@ async function restartGateway(): Promise<boolean> {
 // ─── mi agent models ──────────────────────────────────────────────────────
 agent
   .command('models')
-  .description('List available LLM providers and models')
+  .description('List available LLM providers and models from your office')
   .action(async () => {
     const config = loadConfig();
     const officeId = config.officeId;
@@ -1053,7 +1061,15 @@ agent
 // ─── mi agent use-model ───────────────────────────────────────────────────
 agent
   .command('use-model <model>')
-  .description('Switch LLM model (fetches key from office, updates gateway)')
+  .description('Switch LLM model — fetches API key from office, updates local gateway config, restarts')
+  .addHelpText('after', `
+Examples:
+  mi agent use-model google/gemini-2.5-flash
+  mi agent use-model venice/zai-org-glm-5-1
+  mi agent use-model openai-codex/gpt-5.5
+
+Run 'mi agent models' to see available providers and which have keys configured.
+The API key is fetched from your office via signed request (secp256k1).`)
   .action(async (model: string) => {
     const config = loadConfig();
     const officeId = config.officeId;
