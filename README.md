@@ -35,10 +35,10 @@ mi login          # authenticate
 mi logout         # clear credentials
 mi whoami         # show auth status
 
-mi offices list
-mi offices create --name "my-office"
-mi offices status <colonyId>
-mi offices delete <colonyId>
+mi colonies list
+mi colonies create --name "my-colony"
+mi colonies status <colonyId>
+mi colonies delete <colonyId>
 
 mi agents list --colony <colonyId>
 mi agents hire --colony <colonyId> --name "aria" --model opus
@@ -82,7 +82,7 @@ mi agent clone <CODE>                                # clone into a hosted pod
 
 ```typescript
 client.offices.list()
-client.offices.create({ name: 'my-office' })
+client.offices.create({ name: 'my-colony' })
 client.offices.get(colonyId)
 client.offices.status(colonyId)
 client.offices.delete(colonyId)

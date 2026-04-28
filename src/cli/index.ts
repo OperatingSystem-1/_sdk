@@ -251,7 +251,7 @@ program
 
 // ─── offices ────────────────────────────────────────────────────────────────
 
-const officeCmd = program.command('offices').description('Office management');
+const officeCmd = program.command('colonies').alias('offices').description('Colony management');
 
 officeCmd.command('list').action(async () => {
   jsonOut(await getClient().offices.list());
