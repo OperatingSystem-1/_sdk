@@ -55,6 +55,14 @@ export interface PackageOptions {
   includeWorkspace?: boolean;
   /** Max bundle size in bytes. Default: 500 MB. */
   maxBundleBytes?: number;
+  /**
+   * Destination office type — controls what gets transferred.
+   *   'personal' → full transfer (identity, memory, skills, config, workspace)
+   *   'team'     → skills + config + identity (no personal memory/workspace)
+   *   'public'   → skills only (fresh identity, no memory/config/workspace)
+   * Default: 'personal' (full transfer).
+   */
+  destinationType?: 'personal' | 'team' | 'public';
 }
 
 export interface ExplicitPackageOptions {
@@ -163,7 +171,7 @@ export async function discover(opts: PackageOptions): Promise<{
   report: DiscoveryReport;
   modelPrimary: string | null;
 }> {
-  const { workspaceDir, runtimeDir, exclude = [], includeWorkspace = true } = opts;
+  const { workspaceDir, runtimeDir, exclude = [], includeWorkspace = true, destinationType = 'personal' } = opts;
   const excludeSet = new Set<string>(exclude);
   const files: DiscoveredFile[] = [];
   const report: DiscoveryReport = {
@@ -182,41 +190,53 @@ export async function discover(opts: PackageOptions): Promise<{
   let modelPrimary: string | null = null;
 
   // Layer 1: Identity files at workspace root
-  for (const name of IDENTITY_FILENAMES) {
-    const absPath = join(workspaceDir, name);
-    if (existsSync(absPath)) {
-      const s = statSync(absPath);
-      files.push({ bundlePath: `identity/${name}`, absPath, size: s.size });
-      report.identityFiles.push(name);
+  // Public offices get no identity transfer (fresh identity will be generated)
+  if (destinationType !== 'public') {
+    for (const name of IDENTITY_FILENAMES) {
+      const absPath = join(workspaceDir, name);
+      if (existsSync(absPath)) {
+        // For team offices, skip USER.md (contains owner-specific preferences)
+        if (destinationType === 'team' && name === 'USER.md') continue;
+        const s = statSync(absPath);
+        files.push({ bundlePath: `identity/${name}`, absPath, size: s.size });
+        report.identityFiles.push(name);
+      }
     }
+  } else {
+    report.warnings.push('Identity files skipped (public office — clone gets fresh identity)');
   }
 
   // Layer 2: Memory
-  const memoryDir = join(workspaceDir, 'memory');
-  if (existsSync(memoryDir)) {
-    const memFiles = await walkFiles(memoryDir, memoryDir, excludeSet);
-    for (const f of memFiles) {
-      const s = await stat(f.absPath);
-      if (s.size > MAX_SINGLE_FILE_BYTES) {
-        report.warnings.push(`memory/${f.relPath} is ${(s.size / 1024 / 1024).toFixed(1)} MB — skipped (>${MAX_SINGLE_FILE_BYTES / 1024 / 1024} MB limit)`);
-        continue;
+  // Personal = full memory. Team/public = no personal memory (privacy boundary).
+  if (destinationType === 'personal') {
+    const memoryDir = join(workspaceDir, 'memory');
+    if (existsSync(memoryDir)) {
+      const memFiles = await walkFiles(memoryDir, memoryDir, excludeSet);
+      for (const f of memFiles) {
+        const s = await stat(f.absPath);
+        if (s.size > MAX_SINGLE_FILE_BYTES) {
+          report.warnings.push(`memory/${f.relPath} is ${(s.size / 1024 / 1024).toFixed(1)} MB — skipped (>${MAX_SINGLE_FILE_BYTES / 1024 / 1024} MB limit)`);
+          continue;
+        }
+        files.push({ bundlePath: `memory/session/${f.relPath}`, absPath: f.absPath, size: s.size });
+        report.memoryFiles++;
       }
-      files.push({ bundlePath: `memory/session/${f.relPath}`, absPath: f.absPath, size: s.size });
-      report.memoryFiles++;
     }
-  }
 
-  if (runtimeDir) {
-    const hybridPath = join(runtimeDir, 'hybrid-memory.json');
-    if (existsSync(hybridPath)) {
-      const s = statSync(hybridPath);
-      if (s.size <= MAX_SINGLE_FILE_BYTES) {
-        files.push({ bundlePath: 'memory/hybrid-memory.json', absPath: hybridPath, size: s.size });
-        report.hasHybridMemory = true;
-      } else {
-        report.warnings.push(`hybrid-memory.json is ${(s.size / 1024 / 1024).toFixed(1)} MB — skipped`);
+    if (runtimeDir) {
+      const hybridPath = join(runtimeDir, 'hybrid-memory.json');
+      if (existsSync(hybridPath)) {
+        const s = statSync(hybridPath);
+        if (s.size <= MAX_SINGLE_FILE_BYTES) {
+          files.push({ bundlePath: 'memory/hybrid-memory.json', absPath: hybridPath, size: s.size });
+          report.hasHybridMemory = true;
+        } else {
+          report.warnings.push(`hybrid-memory.json is ${(s.size / 1024 / 1024).toFixed(1)} MB — skipped`);
+        }
       }
     }
+  } else {
+    report.warnings.push(`Memory skipped (${destinationType} office — personal memory stays private)`);
   }
 
   // Layer 3: Skills
@@ -260,7 +280,8 @@ export async function discover(opts: PackageOptions): Promise<{
   }
 
   // Layer 5: Config
-  if (runtimeDir) {
+  // Personal + team get config. Public gets nothing (fresh pod).
+  if (destinationType !== 'public' && runtimeDir) {
     const configPath = join(runtimeDir, 'clawdbot.json');
     if (existsSync(configPath)) {
       const s = statSync(configPath);
@@ -281,10 +302,13 @@ export async function discover(opts: PackageOptions): Promise<{
         report.cronJobs = cron?.jobs?.length ?? 0;
       } catch { /* malformed */ }
     }
+  } else if (destinationType === 'public') {
+    report.warnings.push('Config skipped (public office — clone starts with defaults)');
   }
 
   // Layer 6: Workspace artifacts
-  if (includeWorkspace) {
+  // Only personal offices get workspace artifacts (docs, research, data).
+  if (includeWorkspace && destinationType === 'personal') {
     const artifactDirs = ['docs', 'articles', 'research', 'data'];
     for (const dirName of artifactDirs) {
       if (excludeSet.has(dirName)) continue;

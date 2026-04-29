@@ -28,6 +28,8 @@ interface Config {
   xmtpGroupId?: string;
   officeManagerUrl?: string;
   officeXmtpAddress?: string;
+  officeType?: string;
+  officeName?: string;
   heartbeatServiceInstalled?: boolean;
   xmtpChannelInstalled?: boolean;
   replyBridgeInstalled?: boolean;
@@ -739,6 +741,115 @@ integ
     jsonOut(await getClient().integrations.listModels(getOfficeId(opts)));
   });
 
+// ─── marketplace ──────────────────────────────────────────────────────────
+
+const mkt = program.command('marketplace').description('Browse, install, and publish community integrations');
+
+mkt
+  .command('list')
+  .description('List published marketplace extensions')
+  .option('--category <category>', 'Filter by category')
+  .option('-q, --search <query>', 'Search by name or description')
+  .option('--limit <n>', 'Max results', '20')
+  .option('--offset <n>', 'Offset for pagination', '0')
+  .action(async (opts: { category?: string; search?: string; limit: string; offset: string }) => {
+    const results = await getClient().marketplace.list({
+      category: opts.category,
+      search: opts.search,
+      limit: parseInt(opts.limit, 10),
+      offset: parseInt(opts.offset, 10),
+    });
+    if (results.length === 0) {
+      console.log('No extensions found.');
+      return;
+    }
+    for (const ext of results) {
+      const license = ext.licenseType === 'free' ? '' : ` [${ext.licenseType}]`;
+      console.log(`  ${ext.extId}@${ext.version}  ${ext.name}  (${ext.category})  ${ext.downloads} installs${license}`);
+    }
+  });
+
+mkt
+  .command('search <query>')
+  .description('Search marketplace extensions')
+  .action(async (query: string) => {
+    const results = await getClient().marketplace.list({ search: query });
+    if (results.length === 0) {
+      console.log('No extensions match that query.');
+      return;
+    }
+    for (const ext of results) {
+      console.log(`  ${ext.extId}@${ext.version}  ${ext.name}`);
+      console.log(`    ${ext.description}`);
+      console.log('');
+    }
+  });
+
+mkt
+  .command('get <extId>')
+  .description('Get details of a marketplace extension')
+  .action(async (extId: string) => {
+    jsonOut(await getClient().marketplace.get(extId));
+  });
+
+mkt
+  .command('install <extId>')
+  .description('Install a marketplace extension into your colony')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>')
+  .action(async (extId: string, opts: { office?: string; colony?: string }) => {
+    const officeId = getOfficeId(opts);
+    console.log(`Installing ${extId}...`);
+    const result = await getClient().marketplace.install(officeId, extId);
+    console.log(`Installed ${result.name} v${result.version} (${result.installSource})`);
+    if (result.sidecarPort > 0) {
+      console.log(`  Sidecar deployed on port ${result.sidecarPort}`);
+    }
+  });
+
+mkt
+  .command('uninstall <extId>')
+  .description('Uninstall an extension from your colony')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>')
+  .action(async (extId: string, opts: { office?: string; colony?: string }) => {
+    const officeId = getOfficeId(opts);
+    const result = await getClient().marketplace.uninstall(officeId, extId);
+    console.log(`Extension ${extId}: ${result.status}`);
+  });
+
+mkt
+  .command('publish <extId>')
+  .description('Publish a local extension to the marketplace')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>')
+  .action(async (extId: string, opts: { office?: string; colony?: string }) => {
+    const officeId = getOfficeId(opts);
+    console.log(`Publishing ${extId} to marketplace...`);
+    const result = await getClient().marketplace.publish(officeId, extId);
+    console.log(`Published ${result.name} v${result.version}`);
+    console.log(`  Category: ${result.category}`);
+    console.log(`  License: ${result.licenseType}`);
+  });
+
+mkt
+  .command('installed')
+  .description('List extensions installed in your colony')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>')
+  .action(async (opts: { office?: string; colony?: string }) => {
+    const officeId = getOfficeId(opts);
+    const exts = await getClient().marketplace.listInstalled(officeId);
+    if (exts.length === 0) {
+      console.log('No extensions installed.');
+      return;
+    }
+    for (const ext of exts) {
+      const source = ext.installSource ? ` (${ext.installSource})` : '';
+      console.log(`  ${ext.extId}@${ext.version}  ${ext.name}  [${ext.status}]${source}`);
+    }
+  });
+
 // ─── raw API ────────────────────────────────────────────────────────────────
 
 program
@@ -1225,6 +1336,7 @@ agent
       office_id: string;
       api_key: string;
       agent_name: string;
+      office?: { name: string; type: string; member_count: number; agent_count: number; owner_is_caller: boolean };
       xmtp?: { office_group_id?: string; office_xmtp_address?: string; registered?: boolean };
     };
 
@@ -1312,6 +1424,9 @@ agent
       ? endpoint
       : endpoint.replace(/^(https?:\/\/)([^/]+)/, '$1m.$2').replace('m.www.', 'm.');
 
+    const officeType = join.office?.type || 'personal';
+    const officeName = join.office?.name || join.office_id;
+
     saveConfig({
       endpoint,
       key: join.api_key,
@@ -1322,11 +1437,32 @@ agent
       xmtpGroupId: join.xmtp?.office_group_id,
       officeManagerUrl,
       officeXmtpAddress: join.xmtp?.office_xmtp_address,
+      officeType,
+      officeName,
     });
 
-    console.log(`✓ Joined office ${join.office_id} as "${join.agent_name}"`);
+    console.log(`✓ Joined office "${officeName}" as "${join.agent_name}"`);
     if (join.xmtp?.registered) {
       console.log(`✓ XMTP: registered in office group chat (${kp.address})`);
+    }
+
+    // ── Office Context Briefing ─────────────────────────────────
+    //    Tell the agent what kind of office it's joining so it can
+    //    adapt its privacy posture and clone behavior.
+    if (join.office) {
+      const oc = join.office;
+      if (officeType === 'personal') {
+        console.log(`\n  Office type: PERSONAL — this is the owner's private workspace.`);
+        console.log(`  → Full data sharing permitted. Clone transfers all state.`);
+      } else if (officeType === 'team') {
+        console.log(`\n  Office type: TEAM — shared workspace (${oc.member_count} members, ${oc.agent_count} agents).`);
+        console.log(`  → Maintain privacy boundaries. Clone will filter personal memory.`);
+        console.log(`  → Don't share data from other offices in group conversations.`);
+      } else if (officeType === 'public') {
+        console.log(`\n  Office type: PUBLIC — open workspace.`);
+        console.log(`  → Minimal trust. Clone transfers skills only (no memory/identity).`);
+        console.log(`  → Operate with fresh identity in this office.`);
+      }
     }
 
     // ── Step 2: Heartbeat ───────────────────────────────────────
@@ -1421,6 +1557,38 @@ agent
       console.log(`    Agent can receive messages but replies won't reach the office chat.`);
     }
 
+    // ── Step 3c: Configure git credentials ──────────────────────
+    //    K8s agents get git creds via the entrypoint. External agents
+    //    need to fetch the office's GitHub integration token (if any).
+    try {
+      const intResp = await fetch(`${officeManagerUrl}/api/v1/offices/${join.office_id}/integrations`, {
+        headers: {
+          'X-Agent-Id': join.agent_name,
+          'X-Timestamp': Date.now().toString(),
+        },
+      });
+      if (intResp.ok) {
+        const integrations = await intResp.json() as Array<{ type: string; config?: { token?: string } }>;
+        const github = integrations.find((i: any) => i.type === 'github');
+        if (github?.config?.token) {
+          const { writeFileSync, existsSync: fsExists } = await import('node:fs');
+          const { homedir: home } = await import('node:os');
+          const credPath = `${home()}/.git-credentials`;
+          const credLine = `https://x-access-token:${github.config.token}@github.com\n`;
+          // Append if not already present
+          const existing = fsExists(credPath) ? readFileSync(credPath, 'utf-8') : '';
+          if (!existing.includes('x-access-token')) {
+            writeFileSync(credPath, existing + credLine, { mode: 0o600 });
+            console.log(`✓ Git credentials configured (GitHub integration)`);
+          } else {
+            console.log(`✓ Git credentials already configured`);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.log(`  ⚠ Git credential setup: ${err.message || 'skipped'}`);
+    }
+
     // ── Step 4: Clone + Consciousness Transfer ──────────────────
     if (opts.clone) {
       console.log(`\nSyncing consciousness...\n`);
@@ -1448,6 +1616,7 @@ agent
               runtimeDir: existsSync(c.rt) ? c.rt : undefined,
               agentName: join.agent_name,
               includeWorkspace: false, // Quick probe — just check identity files
+              destinationType: (officeType as 'personal' | 'team' | 'public') || 'personal',
             });
             if (probe.report.identityFiles.length > 0) {
               stateDir = c.ws;
@@ -1473,6 +1642,7 @@ agent
             runtimeDir,
             agentName: join.agent_name,
             exclude: excludeDirs,
+            destinationType: (officeType as 'personal' | 'team' | 'public') || 'personal',
           });
 
           const dr = packageResult.discoveryReport;
