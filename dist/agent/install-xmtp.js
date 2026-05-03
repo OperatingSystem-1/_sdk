@@ -18,9 +18,47 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
-/** Detect the gateway binary name. */
-function detectGatewayBinary() {
-    for (const name of ['clawdbot', 'openclaw']) {
+/**
+ * Detect the gateway binary to install the plugin against.
+ *
+ * Order of preference:
+ *   1. Whichever binary owns the daemon currently listening on :18789.
+ *      Both `clawdbot` and `openclaw` may be installed side-by-side, but only
+ *      one is the running gateway. Patching for the wrong one causes the
+ *      runtime to fail to load the plugin (the `_zod undefined` symptom comes
+ *      from importing `clawdbot/plugin-sdk` while the openclaw runtime owns
+ *      a different copy of zod).
+ *   2. `which` order, preferring `openclaw` (the modern name) over the legacy
+ *      `clawdbot`. Used when no gateway is running yet (first-time install).
+ *
+ * Returns the binary name, or null if neither is installed.
+ */
+export function detectGatewayBinary() {
+    // Probe the running gateway first via lsof + ps. lsof is present on macOS
+    // and standard Linux installs; if missing we silently fall through.
+    try {
+        const pidLine = execSync('lsof -i :18789 -sTCP:LISTEN -t', {
+            stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 2000,
+        }).toString().trim();
+        const pid = pidLine.split('\n')[0];
+        if (pid && /^\d+$/.test(pid)) {
+            const cmd = execSync(`ps -p ${pid} -o command=`, {
+                stdio: ['ignore', 'pipe', 'ignore'],
+                timeout: 2000,
+            }).toString();
+            // Match the package install path so a `node /path/to/openclaw/dist/index.js`
+            // command line is detected even when the bin shim is named differently.
+            if (/[\/\s](openclaw)[\/\s]|node_modules\/openclaw\//.test(cmd))
+                return 'openclaw';
+            if (/[\/\s](clawdbot)[\/\s]|node_modules\/clawdbot\//.test(cmd))
+                return 'clawdbot';
+        }
+    }
+    catch { /* port not bound, lsof not present, or process exited — fall through */ }
+    // No running gateway — fall back to install-order. Prefer openclaw (modern)
+    // over clawdbot (legacy) so first-time installs land on the supported path.
+    for (const name of ['openclaw', 'clawdbot']) {
         try {
             execSync(`which ${name}`, { stdio: 'pipe' });
             return name;
@@ -66,6 +104,11 @@ export async function installXmtpChannel(opts) {
     // ── Step 2: Install the XMTP plugin ────────────────────────────
     // Clone from GitHub and install from local path. The plugin needs
     // compat patching for clawdbot (pre-rename) gateways.
+    //
+    // Pinned to a known-good commit so onboard is reproducible — upstream
+    // changes (e.g. zod major bumps, plugin-sdk import drift) won't silently
+    // break new installs. Bump intentionally after verifying compatibility.
+    const PLUGIN_PINNED_SHA = '50124b1fae639d0123d30712ecc3ef9ee91e57a6';
     const tmpPluginDir = pathJoin(homedir(), '.os1', 'openclaw-xmtp');
     try {
         // Clone if not already present
@@ -74,6 +117,10 @@ export async function installXmtpChannel(opts) {
             execSync(`git clone https://github.com/flooredApe/openclaw-xmtp.git "${tmpPluginDir}"`, {
                 stdio: 'pipe',
                 timeout: 30000,
+            });
+            execSync(`git -C "${tmpPluginDir}" checkout ${PLUGIN_PINNED_SHA}`, {
+                stdio: 'pipe',
+                timeout: 10000,
             });
         }
         // Install npm deps

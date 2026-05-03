@@ -35,6 +35,12 @@ export interface InstallResult {
     warnings: string[];
 }
 /**
+ * Detect which gateway binary owns the daemon listening on :18789, falling
+ * back to install-order with `openclaw` (modern) preferred over `clawdbot`.
+ * Exported for unit tests; consumers should use {@link installXmtpChannel}.
+ */
+export declare function detectGatewayBinary(): 'clawdbot' | 'openclaw' | null;
+/**
  * Install and enable the XMTP channel on the local OpenClaw agent.
  */
 export declare function installXmtpChannel(opts: InstallXmtpOptions): Promise<InstallResult>;
