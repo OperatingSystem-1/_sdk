@@ -1,6 +1,6 @@
 {
   "name": "@mitosislabs/sdk",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Mitosis — persistent AI agents that remember, replicate, and coordinate",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -18,7 +18,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "llms-full.txt"
   ],
   "keywords": [
     "os1",
