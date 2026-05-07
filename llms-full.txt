@@ -1,0 +1,1147 @@
+# Mitosis SDK — Full Reference for LLM Agents
+
+> Source of truth for `@mitosislabs/sdk` v0.7.3.
+> Exhaustive, deterministic, copy-pasteable. No marketing prose.
+> Written for autonomous coding agents that need precise method signatures,
+> route paths, request/response shapes, and error semantics.
+
+When in doubt, read the source. The structure of this file mirrors
+`src/` so you can map any claim back to a file.
+
+================================================================================
+0. PACKAGE FACTS
+================================================================================
+
+name           : @mitosislabs/sdk
+version        : 0.7.3
+license        : MIT
+type           : module        (ES modules only — Node.js, not browser)
+node engines   : >=18
+entry main     : dist/index.js
+entry types    : dist/index.d.ts
+bin            : { "mi": "dist/cli/index.js" }
+build          : tsc            (rootDir=src, outDir=dist)
+tests          : vitest         (npm test)
+runtime deps   : @xmtp/node-sdk, commander, ethereum-cryptography, viem
+dev deps       : typescript, vitest, @types/node
+
+Default endpoint:   https://m.mitosislabs.ai     (office-manager API)
+Auth secret env:    RELAY_JWT_SECRET             (HMAC-SHA256 shared with office-manager)
+Keystore root:      ~/.os1                        (config + per-agent keys + sessions)
+
+================================================================================
+1. PUBLIC EXPORTS  (`src/index.ts`)
+================================================================================
+
+Classes
+  OS1AdminClient                       main entry point, see § 3
+  Transport                            authenticated HTTP transport, see § 4
+  Keystore                             local secret storage, see § 5
+  XMTPChannel                          per-client XMTP session manager, see § 6
+  XMTPSession                          single XMTP session handle, see § 6
+  OfficesAPI, EmployeesAPI, TasksAPI,
+  FilesAPI, CreditsAPI, XMTPAPI,
+  IntegrationsAPI, ExtensionsAPI,
+  EventsAPI, CallbacksAPI, BackupsAPI,
+  EnvAPI, DelegatesAPI, MessagesAPI,
+  WorkspaceAPI, RolesAPI, TransferAPI,
+  LLMPingAPI, WhatsAppAPI, ChromiumAPI,
+  CapabilitiesAPI, ProxyAPI            see § 7
+  OS1Error                             extends Error, fields { status, code }
+
+Helpers
+  generateJWT(secret, payload, ttl?)   build HS256 JWT
+  verifyJWT(token, secret)             verify + decode, throws on bad/expired
+  authorizationHeader(secret, userId)  → "Bearer <jwt>"
+  generateKeyPair()                    secp256k1 → { publicKey: hex(uncompressed,
+                                       04-prefixed,130 chars), privateKey: Uint8Array(32) }
+  publicKeyFromPrivate(privateKey)     → hex string
+  signRequest(agentId, method, path,
+              privateKey)              → { 'X-Agent-Id', 'X-Timestamp', 'X-Signature' }
+  verifySignature(timestamp, method,
+                  path, sigHex, pubHex) → boolean
+
+Types
+  Every interface in `src/types/index.ts` is re-exported with `export type *`.
+  See § 9 for the complete list.
+
+================================================================================
+2. AUTHENTICATION  (`src/auth/`)
+================================================================================
+
+There are two cooperating modes; the `Transport` decides which to use per call.
+
+────────────────────────────────────────────────────────────────────────────────
+2.1 JWT (admin / dashboard)
+────────────────────────────────────────────────────────────────────────────────
+
+File:           src/auth/jwt.ts
+Algorithm:      HS256 (HMAC-SHA256), base64url, no padding.
+Mirrors:        office-manager `internal/auth/jwt.go`.
+
+Header:         { "alg": "HS256", "typ": "JWT" }
+Payload type:
+  interface JWTPayload {
+    botId: string;
+    instanceId?: string;
+    privateIp?: string;
+    userId: string;
+    role?: string;
+    iat: number;          // unix seconds
+    exp: number;          // unix seconds
+  }
+
+Functions:
+  generateJWT(secret: string,
+              payload: Omit<JWTPayload, 'iat' | 'exp'>,
+              ttlSeconds = 3600): string
+  verifyJWT(token: string, secret: string): JWTPayload
+       throws "invalid token format" | "invalid signature" | "token expired"
+  authorizationHeader(secret: string,
+                      userId: string,
+                      botId = ''): string         // returns "Bearer <jwt>"
+
+Implementation notes:
+  • Signature comparison uses node:crypto.timingSafeEqual (constant-time).
+  • Tokens are always single-shot (no caching). Generated per request.
+  • Default TTL on Transport-generated tokens is 3600 s.
+
+────────────────────────────────────────────────────────────────────────────────
+2.2 secp256k1 (per-agent ECDSA)
+────────────────────────────────────────────────────────────────────────────────
+
+File:           src/auth/secp256k1.ts
+Library:        @noble/secp256k1
+Mirrors:        office-manager `internal/auth/pubkey_auth.go`.
+
+Canonical signed payload (literal, with real \n newlines):
+    {unix_timestamp_seconds}\n{HTTP_METHOD_UPPER}\n{path_with_query_string}
+
+Hash:           SHA-256
+Signature:      ECDSA on the secp256k1 curve.
+Wire format:    64-byte compact r||s, hex-encoded (toCompactHex()).
+Server accepts: compact 64-byte OR DER-encoded (any length).
+Time window:    server rejects timestamps off by >60 s.
+
+Headers attached by signRequest:
+    X-Agent-Id    : <agentId>
+    X-Timestamp   : <unix seconds, decimal>
+    X-Signature   : <hex>
+
+Functions:
+  generateKeyPair(): { publicKey: string,            // 130-char hex, 04-prefixed
+                       privateKey: Uint8Array(32) }
+  publicKeyFromPrivate(privateKey: Uint8Array): string
+  signRequest(agentId, method, path, privateKey): Promise<SignedHeaders>
+  verifySignature(timestamp, method, path, sigHex, pubHex): boolean
+
+Path note: include query string when signing; the server reconstructs
+   request URI exactly as the client signed it.
+
+================================================================================
+3. OS1AdminClient  (`src/client.ts`)
+================================================================================
+
+Constructor:
+    new OS1AdminClient(config: ClientConfig)
+
+ClientConfig:
+    {
+      endpoint: string;                              // base URL (no trailing slash)
+      jwt?:   { jwtSecret: string; userId?: string };
+      agent?: { agentId:   string; signingKey: Uint8Array };
+      timeout?: number;                              // ms, default 30000
+    }
+
+If only `jwt` is set            → all requests use JWT.
+If only `agent` is set          → all requests use secp256k1.
+If both are set                 → JWT by default; secp256k1 only when a call
+                                   is explicitly marked `asAgent: true`
+                                   (see Transport.request below).
+Neither set                     → throws on first request:
+                                   "No authentication configured."
+
+Static factories:
+  OS1AdminClient.fromConfig(): Promise<OS1AdminClient>
+       – reads ~/.os1/config.json for endpoint
+       – reads ~/.os1/keys/jwt.key for the HMAC secret
+       – defaults endpoint to https://m.mitosislabs.ai if missing
+       – throws if jwt.key not present
+  OS1AdminClient.asAgent(officeId, agentName, endpoint?): Promise<OS1AdminClient>
+       – loads ~/.os1/keys/<officeId>/<agentName>.key
+       – returns a client configured with `agent` auth
+
+Instance methods (besides API namespaces):
+  health():            Promise<boolean>          GETs `${endpoint}/healthz` (no auth)
+  verifyAuth():        Promise<{ ok: boolean; method: string; error?: string }>
+                                                      attempts `offices.list()`
+  close():             Promise<void>             closes all open XMTP sessions
+
+Members (every one is a typed instance):
+  transport, keystore,
+  offices, employees, tasks, files, credits, xmtpApi, integrations, extensions,
+  events, callbacks, backups, env, delegates, messages, workspace, roles,
+  transfer, llmPing, whatsapp, chromium, capabilities, proxy,
+  xmtp                  // the XMTPChannel manager
+
+================================================================================
+4. Transport  (`src/transport.ts`)
+================================================================================
+
+Responsibilities:
+  • Inject auth headers (JWT or secp256k1 per call).
+  • JSON-encode bodies (skipped for FormData uploads).
+  • Apply `timeout` via AbortController.
+  • Decode JSON responses (or text, or raw Response).
+  • Throw OS1Error on non-2xx (extracts message/error/code from JSON body).
+
+Public methods:
+  request<T>(method, path, options?): Promise<T>
+      options:
+        body?:    unknown                         (JSON or FormData)
+        query?:   Record<string, string|number|undefined>
+        asAgent?: boolean                         force secp256k1 even with JWT
+        raw?:     boolean                         return Response, do not parse
+  get<T>(path, query?)
+  post<T>(path, body?)
+  put<T>(path, body?)
+  patch<T>(path, body?)
+  delete<T>(path)
+  upload<T>(path, filename, data: Buffer|Uint8Array)
+                                                  multipart/form-data, field=`file`
+  stream(path, query?): AsyncGenerator<{ event?: string; data: string }>
+                                                  parses `event:` / `data:` SSE lines
+  get endpoint: string                            base URL
+
+Header shape on the wire:
+  JWT mode:     Authorization: Bearer <token>
+  Agent mode:   X-Agent-Id, X-Timestamp, X-Signature      (no Authorization)
+
+Body precedence:
+  body instanceof FormData   → sent as-is, no Content-Type override
+  body present otherwise     → JSON.stringify, Content-Type: application/json
+  body absent                → no body
+
+================================================================================
+5. Keystore  (`src/auth/keystore.ts`)
+================================================================================
+
+Default base:   ~/.os1/keys           (override: new Keystore({ basePath: '...' }))
+Config file:    ~/.os1/config.json    (NOT inside basePath; lives one level up)
+Permissions:    directories 0700, files 0600 (chmod after write)
+
+Layout
+  ~/.os1/
+  ├── config.json                     # arbitrary JSON ({ endpoint, … })
+  ├── keys/
+  │   ├── jwt.key                     # HMAC secret (string)
+  │   └── <officeId>/<agentName>.key  # secp256k1 private key (32 bytes raw)
+  └── sessions/                       # active session JSON files (currently
+                                        unused by the SDK itself — reserved)
+
+Methods:
+  storeAgentKey(officeId, agentName, privateKey: Uint8Array): Promise<void>
+  loadAgentKey(officeId, agentName): Promise<Uint8Array>
+       throws "No signing key found for <agent> in office <id>." on ENOENT
+  hasAgentKey(officeId, agentName): Promise<boolean>
+  generateAndStore(officeId, agentName): Promise<KeyPair>
+  storeJWTSecret(secret: string): Promise<void>
+  loadJWTSecret(): Promise<string>     throws "No JWT secret found." on ENOENT
+  getPublicKey(officeId, agentName): Promise<string>
+  listAgentKeys(officeId): Promise<string[]>      // names, .key stripped
+  deleteAgentKey(officeId, agentName): Promise<void>
+  storeConfig(config: Record<string, unknown>): Promise<void>
+  loadConfig(): Promise<Record<string, unknown>>  // {} if missing
+
+================================================================================
+6. XMTP — sessions and channels  (`src/xmtp/`)
+================================================================================
+
+XMTPChannel is the manager. XMTPSession is the per-conversation handle.
+Both use the office-manager's `/api/v1/offices/:officeId/xmtp/...` endpoints
+under the hood (they do NOT speak XMTP directly from the SDK process).
+
+────────────────────────────────────────────────────────────────────────────────
+6.1 XMTPChannel  (`src/xmtp/channel.ts`)
+────────────────────────────────────────────────────────────────────────────────
+
+class XMTPChannel {
+  constructor(transport: Transport)
+
+  openSession(officeId, agentName): Promise<XMTPSession>
+      // returns existing open session if one exists, else creates a new one
+  negotiateSession(officeId, agentName, timeoutMs?): Promise<SessionNegotiation>
+      // openSession + session.negotiate(timeoutMs)
+  send(officeId, agentName, content): Promise<void>
+      // openSession; negotiate if needed; session.send(content)
+  getSession(officeId, agentName): XMTPSession | undefined
+  closeSession(officeId, agentName): Promise<void>
+  closeAll(): Promise<void>
+  listSessions(): Array<{ officeId, agentName, sessionId }>   // only open + negotiated
+}
+
+Internal key:   `${officeId}:${agentName}`         (deduplicates sessions)
+
+────────────────────────────────────────────────────────────────────────────────
+6.2 XMTPSession  (`src/xmtp/session.ts`)
+────────────────────────────────────────────────────────────────────────────────
+
+Control message constants (sent JSON-encoded as `content`):
+  __SESSION_START__   { type, session_id, capabilities_request, timestamp }
+  __SESSION_ACK__     { type, session_id, capabilities? }
+  __SESSION_END__     { type, session_id, timestamp }
+
+class XMTPSession {
+  constructor(transport, officeId, agentName)
+      // sessionId = randomUUID()
+
+  negotiate(timeoutMs = 30_000): Promise<SessionNegotiation>
+      1. GET   /api/v1/offices/{officeId}/xmtp/conversations
+         find conversation where peer === agentName
+      2. If none, conversationId := agentName (chat-server creates lazily)
+      3. POST  /api/v1/offices/{officeId}/xmtp/conversations/{conversationId}/messages
+              body: { agent_id: 'admin-sdk',
+                      content: JSON.stringify(__SESSION_START__) }
+      4. Poll  GET .../messages  every 1 s until SESSION_ACK or deadline.
+      5. Either way returns SessionNegotiation; if no ACK, capabilities=[].
+
+  send(content: string): Promise<void>
+      throws "Session is closed" or "Session not negotiated"
+      POST .../messages with { agent_id: 'admin-sdk', content }
+
+  receive(opts?: { limit?: number }): Promise<XMTPMessage[]>
+      • GET .../messages?limit=<n||20>
+      • returns only messages from agentName whose created_at > cursor
+      • advances cursor to newest returned timestamp
+      • filters out control frames (anything whose JSON .type starts with "__SESSION_")
+
+  stream(pollIntervalMs = 2_000): AsyncGenerator<XMTPMessage>
+      // forever, until close() — calls receive() then sleeps
+
+  close(): Promise<void>
+      // best-effort POST __SESSION_END__; sets isOpen → false; idempotent
+
+  get negotiation: SessionNegotiation | null
+  get isOpen:      boolean
+}
+
+SessionNegotiation:
+  {
+    sessionId:      string;      // uuid
+    officeId:       string;
+    agentName:      string;
+    conversationId: string;
+    capabilities?:  string[];
+    startedAt:      string;      // ISO timestamp
+  }
+
+────────────────────────────────────────────────────────────────────────────────
+6.3 Underlying XMTPAPI routes (used by sessions and exposed for direct use)
+────────────────────────────────────────────────────────────────────────────────
+
+GET     /api/v1/offices/:officeId/xmtp/conversations
+GET     /api/v1/offices/:officeId/xmtp/messages/{agentName}/{peerName}
+POST    /api/v1/offices/:officeId/xmtp/send
+GET     /api/v1/offices/:officeId/xmtp/groups
+POST    /api/v1/offices/:officeId/xmtp/groups
+GET     /api/v1/offices/:officeId/xmtp/groups/{groupId}/messages
+POST    /api/v1/offices/:officeId/xmtp/groups/{groupId}/send
+POST    /api/v1/offices/:officeId/xmtp/groups/{groupId}/members
+DELETE  /api/v1/offices/:officeId/xmtp/groups/{groupId}/members/{agentName}
+PATCH   /api/v1/offices/:officeId/xmtp/groups/{groupId}
+
+XMTPSession also uses POST/GET on:
+  /api/v1/offices/:officeId/xmtp/conversations/{conversationId}/messages
+
+================================================================================
+7. API NAMESPACES  (`src/api/*.ts`)
+================================================================================
+
+Notation:
+  • Each method's request/response types are listed where non-obvious.
+  • All `<officeId>` are UUID strings.
+  • All response bodies are JSON unless noted.
+
+────────────────────────────────────────────────────────────────────────────────
+7.1 OfficesAPI         (`src/api/offices.ts`)   prefix /api/v1/offices
+────────────────────────────────────────────────────────────────────────────────
+
+create(req: CreateOfficeRequest)            POST    /                       → Office
+list()                                       GET     /                       → Office[]
+get(officeId)                                GET     /{id}                   → Office
+getSettings(officeId)                        GET     /{id}/settings          → OfficeSettings
+updateSettings(officeId, settings)           PATCH   /{id}/settings          → OfficeSettings
+delete(officeId)                             DELETE  /{id}                   → void
+status(officeId)                             GET     /{id}/status            → ClusterStatus
+kubeconfig(officeId)                         GET     /{id}/kubeconfig        → string (text)
+transfer(officeId, newOwnerId)               POST    /{id}/transfer          → void
+                                                body: { new_owner_id }
+rotateSecret(officeId)                       POST    /{id}/rotate-secret     → { secret }
+setSecret(officeId, secretName, value)       PUT     /{id}/secrets/{name}    → void
+                                                body: { value }
+suspend(officeId)                            POST    /{id}/suspend           → void
+resume(officeId)                             POST    /{id}/resume            → void
+
+CreateOfficeRequest = { name: string, owner_id: string }
+ClusterStatus.phase = 'ready' | 'degraded' | 'failed' | 'provisioning'
+
+────────────────────────────────────────────────────────────────────────────────
+7.2 EmployeesAPI       (`src/api/employees.ts`)
+                       prefix /api/v1/offices/:officeId/employees
+────────────────────────────────────────────────────────────────────────────────
+
+hire(officeId, req: HireRequest)             POST    /                       → Employee
+list(officeId)                               GET     /                       → Employee[]
+get(officeId, name)                          GET     /{name}                 → Employee
+update(officeId, name, req)                  PATCH   /{name}                 → Employee
+delete(officeId, name)                       DELETE  /{name}                 → void
+logs(officeId, name, { tail? })              GET     /{name}/logs?tail=…     → EmployeeLogs
+activity(officeId, name, ActivityQuery?)     GET     /{name}/activity        → ActivityEvent[]
+presence(officeId, name)                     GET     /{name}/presence        → { online, last_seen? }
+lastError(officeId, name)                    GET     /{name}/last-error      → { error?, timestamp? }
+action(officeId, name, EmployeeAction)       POST    /{name}/action          → unknown
+promote(officeId, name, PromoteRequest)      POST    /{name}/promote         → Employee
+setSkills(officeId, name, SkillsRequest)     POST    /{name}/skills          → Employee
+logStatusEvent(officeId, name, event)        POST    /{name}/events          → void
+                                                event: { type, message? }
+archive(officeId, name)                      POST    /{name}/archive         → void
+restore(officeId, name)                      POST    /{name}/restore         → void
+rotateCredentials(officeId, name)            POST    /{name}/credentials/rotate → void
+lifecycle(officeId, name, action: string)    POST    /{name}/lifecycle       → void
+                                                body: { action }
+events(officeId, name)                       GET     /{name}/events          → unknown[]
+chatSessions(officeId, name)                 GET     /{name}/chat-sessions   → ChatSession[]
+
+ActivityQuery       = { limit?: number, offset?: number, category?: string, since?: string }
+HireRequest         = see § 9 (rich object: name, role, modelTier, skills, channels, …)
+PromoteRequest      = { modelTier, provider?, resources? }
+SkillsRequest       = { add?: string[], remove?: string[] }
+
+────────────────────────────────────────────────────────────────────────────────
+7.3 TasksAPI           (`src/api/tasks.ts`)
+                       prefix /api/v1/offices/:officeId/tasks
+────────────────────────────────────────────────────────────────────────────────
+
+create(officeId, CreateTaskRequest)          POST    /                       → Task
+list(officeId)                               GET     /                       → Task[]
+get(officeId, taskId)                        GET     /{id}                   → Task
+stats(officeId)                              GET     /stats                  → TaskStats
+
+CreateTaskRequest = { title, description?, kind?, priority?, assigned_to? }
+TaskStats         = { total, queued, running, completed, failed }
+
+────────────────────────────────────────────────────────────────────────────────
+7.4 FilesAPI           (`src/api/files.ts`)
+                       prefix /api/v1/offices/:officeId/files
+────────────────────────────────────────────────────────────────────────────────
+
+upload(officeId, filename, data)             POST    /                       → void
+                                                multipart, field=`file`
+list(officeId)                               GET     /                       → FileInfo[]
+download(officeId, filename)                 GET     /{filename}             → Response (raw)
+delete(officeId, filename)                   DELETE  /{filename}             → void
+changes(officeId, since?)                    GET     /_changes?since=…       → FileChangesResponse
+getPermissions(officeId, filename)           GET     /{filename}/permissions → FilePermission[]
+setPermissions(officeId, filename, perms)    PUT     /{filename}/permissions → void
+
+FileInfo            = { name, size, modifiedAt }
+FileChange          = { type: 'upload' | 'delete', name, timestamp }
+FileChangesResponse = { events: FileChange[], serverTime, full_refresh? }
+FilePermission      = { agent_name, access: 'none' | 'read' | 'write' }
+
+`download` returns the raw `Response`. To get a buffer:
+    const r = await mi.files.download(officeId, name);
+    const buf = Buffer.from(await r.arrayBuffer());
+
+────────────────────────────────────────────────────────────────────────────────
+7.5 CreditsAPI         (`src/api/credits.ts`)
+                       mixed prefixes under /api/v1/offices/:officeId
+────────────────────────────────────────────────────────────────────────────────
+
+balance(officeId)                            GET     /credits                → CreditBalance
+add(officeId, AddCreditsRequest)             POST    /credits                → CreditBalance
+history(officeId, { limit?, offset? })       GET     /credits/history        → CreditHistoryEntry[]
+usage(officeId)                              GET     /usage                  → unknown
+usageCurrent(officeId)                       GET     /usage/current          → unknown
+usageSummary(officeId)                       GET     /usage/summary          → UsageSummary
+llmUsage(officeId)                           GET     /usage/llm              → unknown
+llmUsageSummary(officeId)                    GET     /usage/llm/summary      → LLMUsageSummary
+agentUsage(officeId, name)                   GET     /employees/{name}/usage → unknown
+quota(officeId)                              GET     /quota                  → Quota
+setQuota(officeId, SetQuotaRequest)          PUT     /quota                  → Quota
+
+CreditBalance      = { office_id, balance }
+AddCreditsRequest  = { amount: number, reason: string }
+CreditHistoryEntry = { id, office_id, amount, balance_after, reason, created_at }
+UsageSummary       = { cpu_core_hours, memory_gib_hours, total_credits, pods[] }
+LLMUsageSummary    = { total_tokens, total_cost, total_credits, agents[] }
+Quota              = { cpu, memory, pods, tier }
+SetQuotaRequest    = { tier, cpu?, memory?, pods? }
+
+────────────────────────────────────────────────────────────────────────────────
+7.6 XMTPAPI            (`src/api/xmtp.ts`)
+                       prefix /api/v1/offices/:officeId/xmtp
+────────────────────────────────────────────────────────────────────────────────
+
+listConversations(officeId)                  GET     /conversations          → XMTPConversation[]
+getMessages(officeId, agent, peer, {limit?}) GET     /messages/{agent}/{peer} → XMTPMessage[]
+send(officeId, SendXMTPMessageRequest)       POST    /send                   → void
+listGroups(officeId)                         GET     /groups                 → XMTPGroup[]
+createGroup(officeId, CreateGroupRequest)    POST    /groups                 → XMTPGroup
+getGroupMessages(officeId, gid, {limit?})    GET     /groups/{gid}/messages  → XMTPMessage[]
+sendGroupMessage(officeId, gid, req)         POST    /groups/{gid}/send      → void
+addMember(officeId, gid, agentName)          POST    /groups/{gid}/members   → void
+removeMember(officeId, gid, agentName)       DELETE  /groups/{gid}/members/{agent} → void
+renameGroup(officeId, gid, name)             PATCH   /groups/{gid}           → void
+                                                body: { name }
+
+SendXMTPMessageRequest = { agent_id, content }
+CreateGroupRequest     = { name?, members: string[] }
+
+────────────────────────────────────────────────────────────────────────────────
+7.7 IntegrationsAPI    (`src/api/integrations.ts`)
+                       /api/v1/offices/:officeId/{provider-models,integrations}
+────────────────────────────────────────────────────────────────────────────────
+
+listProviderModels(officeId)                 GET     /provider-models        → ModelInfo[]
+ensureSecret(officeId, integrationId, key)   POST    /integrations/{id}/secret → void
+                                                body: { key }
+deleteSecret(officeId, integrationId)        DELETE  /integrations/{id}/secret → void
+toggleAgent(officeId, integrationId,
+            agentName, enabled)              POST    /integrations/{id}/agents/{agent} → void
+                                                body: { enabled }
+syncClaudeCodeKey(officeId)                  POST    /integrations/claude-code/sync-key → void
+
+ModelInfo         = { provider, model_id, name, available }
+IntegrationSecret = { provider, has_key, updated_at? }
+SetSecretRequest  = { provider, key }    // (used by some legacy flows)
+
+────────────────────────────────────────────────────────────────────────────────
+7.8 ExtensionsAPI      (`src/api/extensions.ts`)
+                       per-office /api/v1/offices/:officeId/extensions
+                       global   /api/v1/marketplace
+────────────────────────────────────────────────────────────────────────────────
+
+register(officeId, CreateExtensionRequest)   POST    /extensions             → Extension
+list(officeId)                               GET     /extensions             → Extension[]
+get(officeId, extId)                         GET     /extensions/{id}        → Extension
+delete(officeId, extId)                      DELETE  /extensions/{id}        → void
+install(officeId, { extId })                 POST    /extensions/install     → void
+uninstall(officeId, extId)                   DELETE  /extensions/{id}/uninstall → void
+marketplaceList()                            GET     /api/v1/marketplace     → MarketplaceItem[]
+marketplaceGet(extId)                        GET     /api/v1/marketplace/{id}→ MarketplaceItem
+marketplacePublish(data)                     POST    /api/v1/marketplace/publish → void
+
+CreateExtensionRequest = { name, manifest?, panel_html? }
+
+────────────────────────────────────────────────────────────────────────────────
+7.9 EventsAPI / CallbacksAPI / BackupsAPI / EnvAPI / DelegatesAPI /
+    MessagesAPI / WorkspaceAPI / RolesAPI / TransferAPI / LLMPingAPI /
+    WhatsAppAPI / ChromiumAPI / CapabilitiesAPI / ProxyAPI
+                       (all in `src/api/events.ts`)
+────────────────────────────────────────────────────────────────────────────────
+
+EventsAPI    /api/v1/offices/:officeId
+  list()                                      GET     /events                 → unknown[]
+  chatEvents(officeId, sessionKey)            GET     /events/chat/{key}      → unknown[]
+  sshEvents(officeId)                         GET     /events/ssh             → unknown[]
+
+CallbacksAPI
+  podEvent(officeId, PodEventRequest)         POST    /callbacks/pod-event    → void
+  list(officeId)                              GET     /callbacks              → PodCallback[]
+  get(officeId, callbackId)                   GET     /callbacks/{id}         → PodCallback
+  PodEventRequest = { type, payload? }
+
+BackupsAPI
+  list(officeId, { employee? })               GET     /backups                → Backup[]
+  get(officeId, backupId)                     GET     /backups/{id}           → Backup
+  delete(officeId, backupId)                  DELETE  /backups/{id}           → void
+
+EnvAPI
+  list(officeId)                              GET     /env                    → EnvVar[]
+  values(officeId)                            GET     /env/values             → Record<string,string>
+  set(officeId, vars)                         PUT     /env                    → void
+                                                body: Record<string,string>
+  delete(officeId, key)                       DELETE  /env/{key}              → void
+  getAgentEnv(officeId, name)                 GET     /employees/{name}/env   → Record<string,string>
+  setAgentEnv(officeId, name, key, value)     PUT     /employees/{name}/env/{key} → void
+                                                body: { value }
+
+DelegatesAPI
+  list(officeId)                              GET     /delegates              → Delegate[]
+  get(officeId, agentId)                      GET     /delegates/{id}         → Delegate
+  create(officeId, agentId, CreateDelegateRequest)
+                                              POST    /delegates/{id}         → Delegate
+  update(officeId, agentId, partial)          PATCH   /delegates/{id}         → Delegate
+  delete(officeId, agentId)                   DELETE  /delegates/{id}         → void
+  CreateDelegateRequest = { permissions: string[] }
+
+MessagesAPI
+  send(officeId, { to, content })             POST    /messages/send          → void
+  poolStats(officeId)                         GET     /messages/pool-stats    → PoolStats
+  stream(officeId)                            GET     /messages/stream        → SSE generator
+                                                yields { event?, data }
+
+WorkspaceAPI
+  exec(officeId, { command, timeout_ms? })    POST    /workspace/exec         → ExecResponse
+                                                ExecResponse = { stdout, stderr, exit_code }
+  health(officeId)                            GET     /workspace/health       → { healthy }
+
+RolesAPI
+  list(officeId)                              GET     /roles                  → Role[]
+  get(officeId, name)                         GET     /roles/{name}           → Role
+
+TransferAPI            (agent-pod transfer between offices)
+  prepare(officeId)                           POST    /agents/prepare         → { transfer_id }
+  install(officeId, data)                     POST    /agents/install         → void
+  start(officeId, data)                       POST    /agents/start           → void
+  status(officeId, transferId)                GET     /agents/transfer/{id}   → TransferStatus
+
+LLMPingAPI
+  ping(officeId)                              POST    /llm-ping               → PingResult
+  agentPing(officeId, name)                   POST    /employees/{name}/llm-ping → PingResult
+
+WhatsAppAPI
+  qrStart(officeId, name)                     POST    /employees/{name}/whatsapp/qr-start  → void
+  qrStatus(officeId, name)                    GET     /employees/{name}/whatsapp/qr-status → WhatsAppStatus
+  qrStop(officeId, name)                      POST    /employees/{name}/whatsapp/qr-stop   → void
+  sessionStatus(officeId, name)               GET     /employees/{name}/whatsapp/status    → WhatsAppStatus
+  reset(officeId, name)                       POST    /employees/{name}/whatsapp/reset     → void
+  agentStatus(officeId)                       GET     /whatsapp/agents                     → unknown
+  toggleAgentAccess(officeId, agent, enabled) POST    /whatsapp/agents/{agent}/access      → void
+                                                body: { enabled }
+  registerAgent(officeId, agent)              POST    /whatsapp/agents/{agent}/register    → void
+  officeQRStart(officeId)                     POST    /whatsapp/qr-start                   → void
+  officeQRStatus(officeId)                    GET     /whatsapp/qr-status                  → unknown
+  officeReset(officeId)                       POST    /whatsapp/reset                      → void
+
+ChromiumAPI            (per-office headless browser)
+  start(officeId)                             POST    /chromium/start         → ChromiumInstance
+  status(officeId)                            GET     /chromium/status        → ChromiumInstance
+  done(officeId)                              POST    /chromium/done          → void
+  delete(officeId)                            DELETE  /chromium               → void
+
+CapabilitiesAPI
+  self(officeId)                              GET     /capabilities/self      → unknown
+
+ProxyAPI               (teardowns for code/codex IDE proxies)
+  teardownCodeProxy(officeId)                 DELETE  /code-proxy             → void
+  teardownCodexProxy(officeId)                DELETE  /codex-proxy            → void
+
+================================================================================
+8. CLI  (`src/cli/index.ts`)
+================================================================================
+
+Binary:        `mi`           (entry: dist/cli/index.js, shebang `#!/usr/bin/env node`)
+Internal name: `os1-admin`     (printed in --help)
+Library:       commander@12
+
+Commands (verbatim):
+
+mi init [--endpoint <url>] [--secret <secret>]
+mi auth test
+mi auth token [--user <id>] [--ttl <s>]
+
+mi keys generate --office <id> --agent <name>
+mi keys list     --office <id>
+mi keys pubkey   --office <id> --agent <name>
+
+mi offices list
+mi offices create --name <name> --owner <userId>
+mi offices status <officeId>
+mi offices delete <officeId>
+
+mi agents list     --office <id>
+mi agents hire     --office <id> --name <name> [--role <r>] [--model <m>]
+mi agents fire     <officeId> <name>
+mi agents get      <officeId> <name>
+mi agents logs     <officeId> <name> [--tail <n>]
+mi agents activity <officeId> <name> [--limit <n>] [--category <c1,c2>]
+
+mi chat <officeId> <agentName>            # interactive XMTP loop
+mi send <officeId> <agentName> <message>  # one-shot
+
+mi tasks list   --office <id>
+mi tasks create --office <id> --title <t> [--description <d>] [--kind <k>] [--assign <agent>]
+mi tasks stats  --office <id>
+
+mi files ls       --office <id>
+mi files upload   <officeId> <localPath> [--name <remote>]
+mi files download <officeId> <filename>  [--output <path>]
+
+mi credits balance --office <id>
+mi credits add     --office <id> --amount <n> --reason <text>
+
+mi api <METHOD> <path> [--data '<json>'] [--agent <name> --office <id>]
+
+CLI helpers:
+  • `getClient()` → OS1AdminClient.fromConfig() — exits 1 with hint if missing.
+  • `json(data)`  → console.log(JSON.stringify(data, null, 2)).
+  • Interactive `chat` uses readline + a 2 s polling loop on `xmtpSession.receive()`.
+
+================================================================================
+9. TYPE DEFINITIONS  (`src/types/index.ts`)
+================================================================================
+
+Auth
+  JWTAuthConfig          { jwtSecret, userId? }
+  AgentAuthConfig        { agentId, signingKey: Uint8Array(32) }
+  ClientConfig           { endpoint, jwt?, agent?, timeout? }
+  SignedHeaders          { 'X-Agent-Id', 'X-Timestamp', 'X-Signature' }
+  JWTPayload             { botId, instanceId?, privateIp?, userId, role?, iat, exp }
+
+Keystore
+  KeyPair                { publicKey: hex, privateKey: Uint8Array(32) }
+  KeystoreConfig         { basePath? }
+
+Office
+  Office                 { id, name, owner_id, created_at, settings? }
+  CreateOfficeRequest    { name, owner_id }
+  OfficeSettings         Record<string, unknown>
+  ClusterStatus          { phase, operator, ingress, ingressEndpoint?, message? }
+  ComponentStatus        { ready, message? }
+
+Employee  (matches office-manager internal/models/employee.go)
+  Employee               { name, role?, modelTier, modelProvider, skills?,
+                           channels?, resources?, storage?, selfConfigure?,
+                           autoUpdate?, chromium?, webTerminal?, backup?,
+                           imageTag?, customConfig?, env?, envSecrets?,
+                           systemPrompt?, status }
+  EmployeeChannels       { whatsapp?, discord?, telegram?, signal?, xmtp? }
+  EmployeeResources      { cpuRequest?, cpuLimit?, memoryRequest?, memoryLimit? }
+  BackupConfig           { schedule?, enabled? }
+  EmployeeStatus         { phase, ready, gatewayEndpoint?, accessUrl?,
+                           accessToken?, lastSeen?, message? }
+  AgentKitOwner          { name?, phone?, email?, context? }
+  AgentKitConfig         { enabled?, taskQueue?, disableTaskQueue?,
+                           neonSecret?, owner?, personality? }
+  HireRequest            { name, role?, modelTier?, skills?, channels?,
+                           resources?, storage?, selfConfigure?, autoUpdate?,
+                           chromium?, webTerminal?, imageTag?, systemPrompt?,
+                           env?, envSecrets?, customConfig?, agentKit?, botId?,
+                           bedrockCredentials?: { accessKeyId, secretAccessKey, region },
+                           restoreFromBackup? }
+  UpdateEmployeeRequest  Partial of HireRequest minus name + agentKit
+  PromoteRequest         { modelTier, provider?, resources? }
+  SkillsRequest          { add?, remove? }
+  EmployeeAction         { action, params? }
+  EmployeeLogs           { logs, pod }
+
+Tasks
+  Task                   { id, office_id, title, description?, kind?,
+                           priority?, status, assigned_to?, created_at,
+                           completed_at? }
+  CreateTaskRequest      { title, description?, kind?, priority?, assigned_to? }
+  TaskStats              { total, queued, running, completed, failed }
+
+Files
+  FileInfo               { name, size, modifiedAt }
+  FileChange             { type: 'upload' | 'delete', name, timestamp }
+  FileChangesResponse    { events, serverTime, full_refresh? }
+  FilePermission         { agent_name, access: 'none' | 'read' | 'write' }
+
+Credits & usage
+  CreditBalance          { office_id, balance }
+  AddCreditsRequest      { amount, reason }
+  CreditHistoryEntry     { id, office_id, amount, balance_after, reason, created_at }
+  UsageSummary           { cpu_core_hours, memory_gib_hours, total_credits, pods[] }
+  LLMUsageSummary        { total_tokens, total_cost, total_credits, agents[] }
+  Quota                  { cpu, memory, pods, tier }
+  SetQuotaRequest        { tier, cpu?, memory?, pods? }
+
+XMTP
+  XMTPConversation       { id, peer, last_message?, last_message_at? }
+  XMTPGroup              { id, name?, members, created_at }
+  XMTPMessage            { id, from_agent, content, created_at }
+  SendXMTPMessageRequest { agent_id, content }
+  CreateGroupRequest     { name?, members }
+  SessionNegotiation     { sessionId, officeId, agentName, conversationId,
+                           capabilities?, startedAt }
+
+Activity / events
+  ActivityEvent          { id, category, type, summary, timestamp, metadata? }
+                         category ∈ task|message|standup|session|xmtp|
+                                    lifecycle|chat|terminal
+  ActivityQuery          { limit?, offset?, category?, since? }
+  ChatSession            { session_key, started_at, messages }
+
+Integrations / extensions
+  ModelInfo              { provider, model_id, name, available }
+  IntegrationSecret      { provider, has_key, updated_at? }
+  SetSecretRequest       { provider, key }
+  Extension              { id, name, office_id, manifest?, created_at }
+  CreateExtensionRequest { name, manifest?, panel_html? }
+  MarketplaceItem        { id, name, description?, author?, installs }
+
+Channels & misc
+  WhatsAppStatus         { connected, phone_number?, agent_id? }
+  WhatsAppQRStatus       { status, qr? }
+  WhatsAppAgentStatus    { agents: [{ name, whatsapp_enabled }] }
+  ChromiumInstance       { id, status, vnc_url? }
+  Delegate               { agent_id, permissions, created_at }
+  CreateDelegateRequest  { permissions }
+  SendMessageRequest     { to, content }
+  PoolStats              { active, idle }
+  ExecRequest            { command, timeout_ms? }
+  ExecResponse           { stdout, stderr, exit_code }
+  Backup                 { id, employee_name, office_id, s3_key, size_bytes, created_at }
+  TransferStatus         { transfer_id, status, progress? }
+  Role                   { name, permissions }
+  PingResult             { model, latency_ms, success, error? }
+  PodCallback            { id, type, payload, created_at }
+  PodEventRequest        { type, payload? }
+  EnvVar                 { key, value?, source? }
+  SetEnvRequest          { key, value }
+  Paginated<T>           { data, total?, offset?, limit? }
+  APIError               { status, message, code? }
+
+Errors
+  class OS1Error extends Error
+    status: number
+    code?:  string
+    name === 'OS1Error'
+
+================================================================================
+10. ERROR HANDLING
+================================================================================
+
+All non-2xx responses → `OS1Error`. The Transport tries to JSON-parse the
+body and read `message`, `error`, or `code` from it. If parsing fails, the
+HTTP statusText is used as the message.
+
+Patterns:
+
+  try {
+    await mi.employees.hire(officeId, { name: 'aria' });
+  } catch (e) {
+    if (e instanceof OS1Error) {
+      switch (e.status) {
+        case 401: /* auth invalid (JWT secret mismatch or expired token) */
+        case 402: /* office out of credits */
+        case 403: /* user/agent forbidden */
+        case 404: /* missing resource */
+        case 409: /* name conflict (e.g. agent already exists) */
+        case 429: /* rate limit (hire = 3/10min/office) */
+      }
+    }
+  }
+
+Timeouts: AbortController fires at `config.timeout` ms (default 30 000).
+The thrown error is whatever `fetch()` raises on abort (DOMException name
+"AbortError"); not an OS1Error.
+
+================================================================================
+11. ROUTE-BY-ROUTE MAP (FLAT)
+================================================================================
+
+Use this when you only know the URL and need the SDK call.
+
+GET    /healthz                                                            client.health()
+GET    /api/v1/offices                                                     offices.list
+POST   /api/v1/offices                                                     offices.create
+GET    /api/v1/offices/{id}                                                offices.get
+DELETE /api/v1/offices/{id}                                                offices.delete
+GET    /api/v1/offices/{id}/settings                                       offices.getSettings
+PATCH  /api/v1/offices/{id}/settings                                       offices.updateSettings
+GET    /api/v1/offices/{id}/status                                         offices.status
+GET    /api/v1/offices/{id}/kubeconfig                                     offices.kubeconfig
+POST   /api/v1/offices/{id}/transfer                                       offices.transfer
+POST   /api/v1/offices/{id}/rotate-secret                                  offices.rotateSecret
+PUT    /api/v1/offices/{id}/secrets/{name}                                 offices.setSecret
+POST   /api/v1/offices/{id}/suspend                                        offices.suspend
+POST   /api/v1/offices/{id}/resume                                         offices.resume
+
+POST   /api/v1/offices/{id}/employees                                      employees.hire
+GET    /api/v1/offices/{id}/employees                                      employees.list
+GET    /api/v1/offices/{id}/employees/{name}                               employees.get
+PATCH  /api/v1/offices/{id}/employees/{name}                               employees.update
+DELETE /api/v1/offices/{id}/employees/{name}                               employees.delete
+GET    /api/v1/offices/{id}/employees/{name}/logs                          employees.logs
+GET    /api/v1/offices/{id}/employees/{name}/activity                      employees.activity
+GET    /api/v1/offices/{id}/employees/{name}/presence                      employees.presence
+GET    /api/v1/offices/{id}/employees/{name}/last-error                    employees.lastError
+POST   /api/v1/offices/{id}/employees/{name}/action                        employees.action
+POST   /api/v1/offices/{id}/employees/{name}/promote                       employees.promote
+POST   /api/v1/offices/{id}/employees/{name}/skills                        employees.setSkills
+POST   /api/v1/offices/{id}/employees/{name}/events                        employees.logStatusEvent
+GET    /api/v1/offices/{id}/employees/{name}/events                        employees.events
+POST   /api/v1/offices/{id}/employees/{name}/archive                       employees.archive
+POST   /api/v1/offices/{id}/employees/{name}/restore                       employees.restore
+POST   /api/v1/offices/{id}/employees/{name}/credentials/rotate            employees.rotateCredentials
+POST   /api/v1/offices/{id}/employees/{name}/lifecycle                     employees.lifecycle
+GET    /api/v1/offices/{id}/employees/{name}/chat-sessions                 employees.chatSessions
+GET    /api/v1/offices/{id}/employees/{name}/usage                         credits.agentUsage
+GET    /api/v1/offices/{id}/employees/{name}/env                           env.getAgentEnv
+PUT    /api/v1/offices/{id}/employees/{name}/env/{key}                     env.setAgentEnv
+POST   /api/v1/offices/{id}/employees/{name}/llm-ping                      llmPing.agentPing
+POST   /api/v1/offices/{id}/employees/{name}/whatsapp/qr-start             whatsapp.qrStart
+GET    /api/v1/offices/{id}/employees/{name}/whatsapp/qr-status            whatsapp.qrStatus
+POST   /api/v1/offices/{id}/employees/{name}/whatsapp/qr-stop              whatsapp.qrStop
+GET    /api/v1/offices/{id}/employees/{name}/whatsapp/status               whatsapp.sessionStatus
+POST   /api/v1/offices/{id}/employees/{name}/whatsapp/reset                whatsapp.reset
+
+POST   /api/v1/offices/{id}/tasks                                          tasks.create
+GET    /api/v1/offices/{id}/tasks                                          tasks.list
+GET    /api/v1/offices/{id}/tasks/{taskId}                                 tasks.get
+GET    /api/v1/offices/{id}/tasks/stats                                    tasks.stats
+
+POST   /api/v1/offices/{id}/files                                          files.upload
+GET    /api/v1/offices/{id}/files                                          files.list
+GET    /api/v1/offices/{id}/files/{filename}                               files.download
+DELETE /api/v1/offices/{id}/files/{filename}                               files.delete
+GET    /api/v1/offices/{id}/files/_changes                                 files.changes
+GET    /api/v1/offices/{id}/files/{filename}/permissions                   files.getPermissions
+PUT    /api/v1/offices/{id}/files/{filename}/permissions                   files.setPermissions
+
+GET    /api/v1/offices/{id}/credits                                        credits.balance
+POST   /api/v1/offices/{id}/credits                                        credits.add
+GET    /api/v1/offices/{id}/credits/history                                credits.history
+GET    /api/v1/offices/{id}/usage                                          credits.usage
+GET    /api/v1/offices/{id}/usage/current                                  credits.usageCurrent
+GET    /api/v1/offices/{id}/usage/summary                                  credits.usageSummary
+GET    /api/v1/offices/{id}/usage/llm                                      credits.llmUsage
+GET    /api/v1/offices/{id}/usage/llm/summary                              credits.llmUsageSummary
+GET    /api/v1/offices/{id}/quota                                          credits.quota
+PUT    /api/v1/offices/{id}/quota                                          credits.setQuota
+
+GET    /api/v1/offices/{id}/xmtp/conversations                             xmtpApi.listConversations
+GET    /api/v1/offices/{id}/xmtp/messages/{agent}/{peer}                   xmtpApi.getMessages
+POST   /api/v1/offices/{id}/xmtp/send                                      xmtpApi.send
+GET    /api/v1/offices/{id}/xmtp/groups                                    xmtpApi.listGroups
+POST   /api/v1/offices/{id}/xmtp/groups                                    xmtpApi.createGroup
+GET    /api/v1/offices/{id}/xmtp/groups/{gid}/messages                     xmtpApi.getGroupMessages
+POST   /api/v1/offices/{id}/xmtp/groups/{gid}/send                         xmtpApi.sendGroupMessage
+POST   /api/v1/offices/{id}/xmtp/groups/{gid}/members                      xmtpApi.addMember
+DELETE /api/v1/offices/{id}/xmtp/groups/{gid}/members/{agent}              xmtpApi.removeMember
+PATCH  /api/v1/offices/{id}/xmtp/groups/{gid}                              xmtpApi.renameGroup
+
+GET    /api/v1/offices/{id}/provider-models                                integrations.listProviderModels
+POST   /api/v1/offices/{id}/integrations/{intg}/secret                     integrations.ensureSecret
+DELETE /api/v1/offices/{id}/integrations/{intg}/secret                     integrations.deleteSecret
+POST   /api/v1/offices/{id}/integrations/{intg}/agents/{agent}             integrations.toggleAgent
+POST   /api/v1/offices/{id}/integrations/claude-code/sync-key              integrations.syncClaudeCodeKey
+
+POST   /api/v1/offices/{id}/extensions                                     extensions.register
+GET    /api/v1/offices/{id}/extensions                                     extensions.list
+GET    /api/v1/offices/{id}/extensions/{extId}                             extensions.get
+DELETE /api/v1/offices/{id}/extensions/{extId}                             extensions.delete
+POST   /api/v1/offices/{id}/extensions/install                             extensions.install
+DELETE /api/v1/offices/{id}/extensions/{extId}/uninstall                   extensions.uninstall
+GET    /api/v1/marketplace                                                 extensions.marketplaceList
+GET    /api/v1/marketplace/{extId}                                         extensions.marketplaceGet
+POST   /api/v1/marketplace/publish                                         extensions.marketplacePublish
+
+GET    /api/v1/offices/{id}/events                                         events.list
+GET    /api/v1/offices/{id}/events/chat/{key}                              events.chatEvents
+GET    /api/v1/offices/{id}/events/ssh                                     events.sshEvents
+
+POST   /api/v1/offices/{id}/callbacks/pod-event                            callbacks.podEvent
+GET    /api/v1/offices/{id}/callbacks                                      callbacks.list
+GET    /api/v1/offices/{id}/callbacks/{cbId}                               callbacks.get
+
+GET    /api/v1/offices/{id}/backups                                        backups.list
+GET    /api/v1/offices/{id}/backups/{backupId}                             backups.get
+DELETE /api/v1/offices/{id}/backups/{backupId}                             backups.delete
+
+GET    /api/v1/offices/{id}/env                                            env.list
+GET    /api/v1/offices/{id}/env/values                                     env.values
+PUT    /api/v1/offices/{id}/env                                            env.set
+DELETE /api/v1/offices/{id}/env/{key}                                      env.delete
+
+GET    /api/v1/offices/{id}/delegates                                      delegates.list
+GET    /api/v1/offices/{id}/delegates/{aid}                                delegates.get
+POST   /api/v1/offices/{id}/delegates/{aid}                                delegates.create
+PATCH  /api/v1/offices/{id}/delegates/{aid}                                delegates.update
+DELETE /api/v1/offices/{id}/delegates/{aid}                                delegates.delete
+
+POST   /api/v1/offices/{id}/messages/send                                  messages.send
+GET    /api/v1/offices/{id}/messages/pool-stats                            messages.poolStats
+GET    /api/v1/offices/{id}/messages/stream                                messages.stream  (SSE)
+
+POST   /api/v1/offices/{id}/workspace/exec                                 workspace.exec
+GET    /api/v1/offices/{id}/workspace/health                               workspace.health
+
+GET    /api/v1/offices/{id}/roles                                          roles.list
+GET    /api/v1/offices/{id}/roles/{name}                                   roles.get
+
+POST   /api/v1/offices/{id}/agents/prepare                                 transfer.prepare
+POST   /api/v1/offices/{id}/agents/install                                 transfer.install
+POST   /api/v1/offices/{id}/agents/start                                   transfer.start
+GET    /api/v1/offices/{id}/agents/transfer/{tid}                          transfer.status
+
+POST   /api/v1/offices/{id}/llm-ping                                       llmPing.ping
+
+GET    /api/v1/offices/{id}/whatsapp/agents                                whatsapp.agentStatus
+POST   /api/v1/offices/{id}/whatsapp/agents/{agent}/access                 whatsapp.toggleAgentAccess
+POST   /api/v1/offices/{id}/whatsapp/agents/{agent}/register               whatsapp.registerAgent
+POST   /api/v1/offices/{id}/whatsapp/qr-start                              whatsapp.officeQRStart
+GET    /api/v1/offices/{id}/whatsapp/qr-status                             whatsapp.officeQRStatus
+POST   /api/v1/offices/{id}/whatsapp/reset                                 whatsapp.officeReset
+
+POST   /api/v1/offices/{id}/chromium/start                                 chromium.start
+GET    /api/v1/offices/{id}/chromium/status                                chromium.status
+POST   /api/v1/offices/{id}/chromium/done                                  chromium.done
+DELETE /api/v1/offices/{id}/chromium                                       chromium.delete
+
+GET    /api/v1/offices/{id}/capabilities/self                              capabilities.self
+
+DELETE /api/v1/offices/{id}/code-proxy                                     proxy.teardownCodeProxy
+DELETE /api/v1/offices/{id}/codex-proxy                                    proxy.teardownCodexProxy
+
+================================================================================
+12. CANONICAL EXAMPLES
+================================================================================
+
+# 12.1 Bootstrapping a client (env-based, recommended for scripts)
+
+import { OS1AdminClient } from '@mitosislabs/sdk';
+
+const mi = new OS1AdminClient({
+  endpoint: process.env.OS1_ENDPOINT ?? 'https://m.mitosislabs.ai',
+  jwt: { jwtSecret: process.env.RELAY_JWT_SECRET! },
+  timeout: 15_000,
+});
+
+const offices = await mi.offices.list();
+await mi.close();
+
+# 12.2 Iterating every office and every agent
+
+for (const office of await mi.offices.list()) {
+  const agents = await mi.employees.list(office.id);
+  for (const a of agents) {
+    const last = await mi.employees.lastError(office.id, a.name).catch(() => null);
+    console.log(office.name, a.name, a.status.phase, last?.error ?? '');
+  }
+}
+
+# 12.3 Hiring + waiting for ready
+
+const employee = await mi.employees.hire(officeId, {
+  name: 'aria', role: 'researcher', modelTier: 'sonnet',
+});
+
+while (true) {
+  const e = await mi.employees.get(officeId, 'aria');
+  if (e.status.ready) break;
+  await new Promise(r => setTimeout(r, 5_000));
+}
+
+# 12.4 XMTP DM with capability negotiation
+
+const session = await mi.xmtp.openSession(officeId, 'aria');
+const meta    = await session.negotiate(15_000);   // SessionNegotiation
+await session.send('hello aria');
+
+(async () => {
+  for await (const msg of session.stream(2_000)) {
+    console.log(msg.from_agent, msg.content);
+    if (msg.content === 'BYE') await session.close();
+  }
+})();
+
+# 12.5 Acting as the agent (secp256k1)
+
+import { generateKeyPair } from '@mitosislabs/sdk';
+const kp = generateKeyPair();
+await mi.keystore.storeAgentKey(officeId, 'aria', kp.privateKey);
+
+const agentClient = await OS1AdminClient.asAgent(officeId, 'aria');
+await agentClient.callbacks.podEvent(officeId, { type: 'ready' });
+
+# 12.6 Streaming the office message bus (SSE)
+
+for await (const evt of mi.messages.stream(officeId)) {
+  console.log(evt.event ?? 'message', evt.data);
+}
+
+# 12.7 Raw call (escape hatch)
+
+const result = await mi.transport.request<unknown>(
+  'POST',
+  `/api/v1/offices/${officeId}/some/new-route`,
+  { body: { foo: 'bar' }, asAgent: false },
+);
+
+================================================================================
+13. INVARIANTS / GOTCHAS
+================================================================================
+
+• Path signing for secp256k1 includes the query string. If you want a signed
+  GET with query params, sign the path that the Transport actually sends —
+  the Transport already does this, but if you call signRequest yourself,
+  remember to include `?key=value`.
+
+• `Transport.upload` field name is hard-coded to `file`. Server-side handler
+  expects multipart/form-data with that field.
+
+• `files.download` returns the raw `Response`. Use `await r.arrayBuffer()`
+  or `r.body` (Node Readable). Do not call `.json()` on binary files.
+
+• `xmtpSession.send` always uses agent_id = 'admin-sdk' as the sender alias
+  (matches office-manager's expectation for SDK-originated messages). The
+  underlying signing identity is whatever auth the Transport uses.
+
+• `XMTPChannel.openSession` is sync-returning-a-promise but only does work
+  when the conversation is created by the first negotiate/send.
+
+• `Keystore` puts `config.json` outside `keys/` — at `~/.os1/config.json`.
+  This is intentional so `keys/` can be backed up without leaking endpoint
+  preferences, and vice versa.
+
+• Default endpoint resolution order:
+    1. `OS1AdminClient` constructor `endpoint` arg.
+    2. `~/.os1/config.json` `endpoint` field (when using `fromConfig`/`asAgent`).
+    3. Fallback: `https://m.mitosislabs.ai`.
+
+• The CLI displays the program name `os1-admin` (from `Command.name()`),
+  but the binary itself is `mi`. Help text shows `mi`-prefixed examples in
+  this reference; older outputs may say `os1-admin`.
+
+• Rate limit: agent hiring is capped server-side at ~3/10min/office. The
+  SDK does not retry on 429.
+
+• Time skew matters: secp256k1 signatures must be within ±60 s of server
+  clock. The SDK uses `Date.now()` directly — sync your machine clock.
+
+• ESM only. `require('@mitosislabs/sdk')` will fail. Use `import` or
+  dynamic `await import(...)`.
+
+================================================================================
+14. SOURCE → SYMBOL INDEX
+================================================================================
+
+src/index.ts                       all public re-exports
+src/client.ts                      OS1AdminClient
+src/transport.ts                   Transport
+src/auth/index.ts                  re-exports of jwt + secp256k1 + keystore
+src/auth/jwt.ts                    generateJWT, verifyJWT, authorizationHeader
+src/auth/secp256k1.ts              generateKeyPair, publicKeyFromPrivate,
+                                    signRequest, verifySignature
+src/auth/keystore.ts               Keystore
+src/api/offices.ts                 OfficesAPI
+src/api/employees.ts               EmployeesAPI
+src/api/tasks.ts                   TasksAPI
+src/api/files.ts                   FilesAPI
+src/api/credits.ts                 CreditsAPI (credits + usage + quota)
+src/api/xmtp.ts                    XMTPAPI
+src/api/integrations.ts            IntegrationsAPI
+src/api/extensions.ts              ExtensionsAPI (+ marketplace methods)
+src/api/events.ts                  EventsAPI, CallbacksAPI, BackupsAPI,
+                                    EnvAPI, DelegatesAPI, MessagesAPI,
+                                    WorkspaceAPI, RolesAPI, TransferAPI,
+                                    LLMPingAPI, WhatsAppAPI, ChromiumAPI,
+                                    CapabilitiesAPI, ProxyAPI
+src/xmtp/channel.ts                XMTPChannel
+src/xmtp/session.ts                XMTPSession + control message constants
+src/cli/index.ts                   `mi` CLI (commander program)
+src/types/index.ts                 every TS interface + OS1Error class
+
+Tests
+src/../tests/auth.test.ts          JWT + secp256k1 round-trips, tamper detection
+src/../tests/client.test.ts        OS1AdminClient construction
+src/../tests/install-xmtp.test.ts  legacy XMTP installer (older code path)
+src/../tests/integration.test.ts   live office-manager smoke (skipped without secret)
+src/../tests/session.test.ts       XMTPSession negotiation + cursor logic
+
+End of file.
