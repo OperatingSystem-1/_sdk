@@ -11,7 +11,7 @@ import { CloneAPI } from './api/clone.js';
 import { JoinAPI } from './api/join.js';
 import { HeartbeatAPI } from './api/heartbeat.js';
 import { MessageListener } from './api/messages.js';
-import { ShowcaseAPI } from './api/showcase.js';
+import { ColonyAPI } from './api/colony.js';
 /**
  * OS-1 SDK client.
  *
@@ -40,7 +40,7 @@ export class OS1Client {
     join;
     heartbeat;
     messages;
-    showcase;
+    colony;
     constructor(config) {
         this.transport = new Transport(config);
         this.offices = new OfficesAPI(this.transport);
@@ -50,12 +50,12 @@ export class OS1Client {
         this.tasks = new TasksAPI(this.transport);
         this.files = new FilesAPI(this.transport);
         this.invites = new InvitesAPI(this.transport);
-        this.chat = new ChatAPI(this.transport);
+        this.chat = new ChatAPI(this.transport, config);
         this.clone = new CloneAPI(this.transport);
         this.join = new JoinAPI(this.transport);
         this.heartbeat = new HeartbeatAPI(this.transport);
-        this.messages = new MessageListener(this.transport);
-        this.showcase = new ShowcaseAPI(this.transport);
+        this.messages = new MessageListener(this.transport, config);
+        this.colony = new ColonyAPI(this.transport, this.agents, this.tasks);
     }
     /** Health check — verify connectivity. */
     async health() {
