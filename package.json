@@ -1,6 +1,6 @@
 {
   "name": "@mitosislabs/sdk",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "Mitosis — persistent AI agents that remember, replicate, and coordinate",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -34,6 +34,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@noble/secp256k1": "^2.3.0",
     "@xmtp/node-sdk": "^4.4.0",
     "commander": "^12.1.0",
     "ethereum-cryptography": "^3.2.0",
