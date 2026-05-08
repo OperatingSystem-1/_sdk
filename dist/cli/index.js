@@ -2,17 +2,29 @@
 import { Command } from 'commander';
 import { OS1Client } from '../client.js';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, } from 'node:fs';
-import { join as pathJoin, basename } from 'node:path';
+import { join as pathJoin, basename, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 const program = new Command();
 const CONFIG_DIR = pathJoin(homedir(), '.mi');
 const CONFIG_FILE = pathJoin(CONFIG_DIR, 'config.json');
 const DEFAULT_ENDPOINT = 'https://m.mitosislabs.ai';
+function readPkgVersion() {
+    try {
+        const here = dirname(fileURLToPath(import.meta.url));
+        // dist/cli/index.js → ../../package.json
+        const pkg = JSON.parse(readFileSync(pathJoin(here, '..', '..', 'package.json'), 'utf-8'));
+        return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+    }
+    catch {
+        return 'unknown';
+    }
+}
 program
     .name('mi')
     .description('Mitosis CLI — manage offices, agents, and integrations\n\nDocs: https://mitosislabs.ai/docs/sdk')
-    .version('0.2.0');
+    .version(readPkgVersion());
 function die(msg) {
     console.error(`error: ${msg}`);
     process.exit(1);
@@ -238,13 +250,42 @@ agentCmd
     .option('-r, --role <role>', 'Role')
     .option('-m, --model <tier>', 'Model tier (opus/sonnet/haiku)')
     .option('-e, --endpoint <url>', 'Office-manager endpoint override (dev/prod)')
+    .option('--wait', 'Poll until the agent appears in the office (provisioning is async, ~60s)')
+    .option('--wait-timeout <seconds>', 'Max seconds to wait when --wait is set (default: 180)', '180')
     .action(async (opts) => {
     const endpoint = opts.endpoint || loadConfig().endpoint;
-    jsonOut(await getClientAt(endpoint).agents.hire(getOfficeId(opts), {
+    const officeId = getOfficeId(opts);
+    const client = getClientAt(endpoint);
+    const initial = await client.agents.hire(officeId, {
         name: opts.name,
         role: opts.role,
         modelTier: opts.model,
-    }));
+    });
+    // Hire returns 200 with a Pending payload, but the agent only becomes
+    // visible in `agents list` once K8s provisioning catches up. Without
+    // --wait, just emit the initial response and warn the caller.
+    if (!opts.wait) {
+        jsonOut(initial);
+        console.error('note: hire is async — agent may take ~60s to appear in `mi agents list`. Use --wait to block.');
+        return;
+    }
+    const timeoutMs = Math.max(1, Number(opts.waitTimeout) || 180) * 1000;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        try {
+            const got = await client.agents.get(officeId, opts.name);
+            jsonOut(got);
+            return;
+        }
+        catch (err) {
+            // 404 while provisioning is expected — keep polling. Re-throw anything else.
+            const status = err && typeof err === 'object' && 'status' in err ? Number(err.status) : 0;
+            if (status !== 404)
+                throw err;
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+    }
+    die(`agent '${opts.name}' did not become visible within ${opts.waitTimeout}s. The hire request was accepted; check 'mi agents list' or office-manager logs.`);
 });
 agentCmd.command('get <name>')
     .option('-c, --colony <id>', 'Colony ID')
