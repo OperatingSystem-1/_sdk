@@ -101,6 +101,24 @@ const offices = await mi.offices.list();
 console.log(offices.map(o => `${o.name} (${o.id})`));
 ```
 
+### Where rows land (CLA-904)
+
+`mi offices create` and `mi agents hire` go through the **dashboard**, not
+office-manager directly. This ensures the canonical `offices` row gets the
+dashboard-only columns (office_secret, manager_url, office_type, created_by)
+and that the agent appears in the user's `/dashboard` view.
+
+The transport derives the dashboard host from the configured endpoint:
+
+| `endpoint` | derived `dashboardEndpoint` |
+|---|---|
+| `https://m.mitosislabs.ai` | `https://mitosislabs.ai` |
+| `https://m.dev.mitosislabs.ai` | `https://dev.mitosislabs.ai` |
+| `http://localhost:8080` | `http://localhost:3000` |
+
+Override via `dashboardEndpoint` in `ClientConfig` for non-standard envs.
+All other API calls (list/get/fire/etc.) target office-manager directly.
+
 ---
 
 ## Authentication

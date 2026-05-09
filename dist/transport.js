@@ -171,10 +171,106 @@ export class Transport {
         }
     }
     /**
-     * Get the base endpoint URL.
+     * Get the base endpoint URL (office-manager).
      */
     get endpoint() {
         return this.config.endpoint;
+    }
+    /**
+     * Get the dashboard endpoint URL (CLA-904: SDK creates land in the
+     * dashboard's dual-write route so dashboard tables stay in sync).
+     *
+     * Priority:
+     *   1. config.dashboardEndpoint (explicit override)
+     *   2. derived from config.endpoint:
+     *        m.mitosislabs.ai     → mitosislabs.ai
+     *        m.dev.mitosislabs.ai → dev.mitosislabs.ai
+     *        localhost:8080       → localhost:3000
+     *        anything else        → unchanged (best-effort fallback)
+     */
+    get dashboardEndpoint() {
+        if (this.config.dashboardEndpoint) {
+            return this.config.dashboardEndpoint;
+        }
+        const e = this.config.endpoint;
+        // localhost dev: OM on :8080, dashboard on :3000
+        if (e.includes('localhost:8080') || e.includes('127.0.0.1:8080')) {
+            return e.replace(':8080', ':3000');
+        }
+        try {
+            const url = new URL(e);
+            // Strip leading "m." subdomain (m.foo.com → foo.com, m.dev.foo.com → dev.foo.com)
+            if (url.hostname.startsWith('m.')) {
+                url.hostname = url.hostname.slice(2);
+                return url.origin;
+            }
+        }
+        catch { }
+        // Fallback: assume same origin (caller can override via dashboardEndpoint).
+        return e;
+    }
+    /**
+     * Make an authenticated request to the dashboard host (instead of OM).
+     * Used for create/hire flows that must dual-write dashboard tables.
+     * Auth: only `auth.token` (mi_*) is supported here — JWT and agent
+     * signing target office-manager only.
+     */
+    async dashboardRequest(method, path, options) {
+        if (!this.config.auth || this.config.auth.type !== 'token' || !this.config.auth.token) {
+            throw new Error('dashboardRequest requires auth.token (mi_*) — JWT/agent auth not supported by dashboard.');
+        }
+        let fullPath = path;
+        if (options?.query) {
+            const params = new URLSearchParams();
+            for (const [k, v] of Object.entries(options.query)) {
+                if (v !== undefined)
+                    params.set(k, String(v));
+            }
+            const qs = params.toString();
+            if (qs)
+                fullPath += `?${qs}`;
+        }
+        const url = `${this.dashboardEndpoint}${fullPath}`;
+        const headers = {
+            Authorization: `Bearer ${this.config.auth.token}`,
+        };
+        if (options?.body && !(options.body instanceof FormData)) {
+            headers['Content-Type'] = 'application/json';
+        }
+        const controller = new AbortController();
+        const timeout = this.config.timeout ?? 30000;
+        const timer = setTimeout(() => controller.abort(), timeout);
+        try {
+            const response = await fetch(url, {
+                method,
+                headers,
+                body: options?.body
+                    ? options.body instanceof FormData
+                        ? options.body
+                        : JSON.stringify(options.body)
+                    : undefined,
+                signal: controller.signal,
+            });
+            if (!response.ok) {
+                let message = response.statusText;
+                let code;
+                try {
+                    const err = await response.json();
+                    message = err.message ?? err.error ?? message;
+                    code = err.code;
+                }
+                catch { }
+                throw new OS1Error(response.status, message, code);
+            }
+            const contentType = response.headers.get('content-type') ?? '';
+            if (contentType.includes('application/json')) {
+                return (await response.json());
+            }
+            return (await response.text());
+        }
+        finally {
+            clearTimeout(timer);
+        }
     }
 }
 //# sourceMappingURL=transport.js.map

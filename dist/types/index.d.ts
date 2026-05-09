@@ -18,6 +18,14 @@ export interface ClientConfig {
     agent?: AgentAuthConfig;
     /** Token auth — used by `mi login`-issued API keys. */
     auth?: TokenAuthConfig;
+    /**
+     * Dashboard endpoint override for create/hire dual-write (CLA-904).
+     * If unset, derived from `endpoint`:
+     *   m.mitosislabs.ai     → mitosislabs.ai
+     *   m.dev.mitosislabs.ai → dev.mitosislabs.ai
+     *   localhost:8080       → localhost:3000
+     */
+    dashboardEndpoint?: string;
     /** Request timeout in ms (default: 30000) */
     timeout?: number;
 }
