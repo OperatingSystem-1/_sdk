@@ -221,8 +221,20 @@ officeCmd.command('list').action(async () => {
 officeCmd
     .command('create')
     .requiredOption('-n, --name <name>', 'Name')
+    .option('-f, --force', 'Create a new colony even if you already own one (bypasses the welcome-flow dedup guard)')
     .action(async (opts) => {
-    jsonOut(await getClient().offices.create({ name: opts.name }));
+    const result = await getClient().offices.create({ name: opts.name, forceCreate: !!opts.force });
+    // The dashboard's POST /api/offices dedupes per-user: if the caller already
+    // owns a non-archived colony, it returns that one with `existing: true` and
+    // the requested --name is ignored. Surface this loudly so humans don't miss
+    // it and so LLM agents recognize the case and confirm with the user before
+    // retrying with --force. JSON still goes to stdout for machine consumers.
+    if (result && result.existing && !opts.force) {
+        console.error(`note: you already own a colony named "${result.name}" (${result.id}) — returning that one.`);
+        console.error(`      the requested name "${opts.name}" was ignored.`);
+        console.error(`      to create a second colony, re-run with --force.`);
+    }
+    jsonOut(result);
 });
 officeCmd.command('status <colonyId>').action(async (id) => {
     jsonOut(await getClient().offices.status(id));

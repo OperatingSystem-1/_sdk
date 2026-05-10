@@ -367,6 +367,12 @@ Notation:
 ────────────────────────────────────────────────────────────────────────────────
 
 create(req: CreateOfficeRequest)            POST    /                       → Office
+                                                NOTE: routed through dashboard, not OM (CLA-904).
+                                                The dashboard dedupes per-user: if the caller
+                                                already owns a non-archived colony, the response
+                                                is that existing colony with `existing: true` and
+                                                the requested `name` is IGNORED. Pass
+                                                `forceCreate: true` to bypass.
 list()                                       GET     /                       → Office[]
 get(officeId)                                GET     /{id}                   → Office
 getSettings(officeId)                        GET     /{id}/settings          → OfficeSettings
@@ -382,8 +388,16 @@ setSecret(officeId, secretName, value)       PUT     /{id}/secrets/{name}    →
 suspend(officeId)                            POST    /{id}/suspend           → void
 resume(officeId)                             POST    /{id}/resume            → void
 
-CreateOfficeRequest = { name: string, owner_id: string }
+CreateOfficeRequest = { name: string, owner_id?: string, forceCreate?: boolean }
 ClusterStatus.phase = 'ready' | 'degraded' | 'failed' | 'provisioning'
+
+# Agent-handling rule for offices.create
+# When the response contains `existing: true`, the user already owns a colony
+# and your requested name was discarded. Do NOT pretend you created what was
+# asked for. Surface the existing colony to the user, ask whether to keep
+# using it or create a second one, and only retry with `forceCreate: true`
+# after explicit confirmation. The dashboard's office-selector UI uses the
+# same `forceCreate: true` for its explicit "create new colony" button.
 
 ────────────────────────────────────────────────────────────────────────────────
 7.2 EmployeesAPI       (`src/api/employees.ts`)
@@ -646,10 +660,10 @@ mi keys generate --office <id> --agent <name>
 mi keys list     --office <id>
 mi keys pubkey   --office <id> --agent <name>
 
-mi offices list
-mi offices create --name <name> --owner <userId>
-mi offices status <officeId>
-mi offices delete <officeId>
+mi colonies list                              # alias: mi offices list
+mi colonies create --name <name> [--force]    # --force bypasses per-user dedup
+mi colonies status <colonyId>
+mi colonies delete <colonyId>
 
 mi agents list     --office <id>
 mi agents hire     --office <id> --name <name> [--role <r>] [--model <m>]
@@ -695,8 +709,13 @@ Keystore
   KeystoreConfig         { basePath? }
 
 Office
-  Office                 { id, name, owner_id, created_at, settings? }
-  CreateOfficeRequest    { name, owner_id }
+  Office                 { id, name, owner_id, created_at, settings?, existing? }
+                         existing?: true is set when offices.create returned
+                         the caller's pre-existing colony (per-user dedup).
+                         The requested name was IGNORED in that case.
+  CreateOfficeRequest    { name, owner_id?, forceCreate? }
+                         forceCreate?: true bypasses the per-user dedup so a
+                         second colony is actually created.
   OfficeSettings         Record<string, unknown>
   ClusterStatus          { phase, operator, ingress, ingressEndpoint?, message? }
   ComponentStatus        { ready, message? }

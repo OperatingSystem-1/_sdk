@@ -56,10 +56,28 @@ export interface Office {
     owner_id: string;
     created_at: string;
     settings?: Record<string, unknown>;
+    /**
+     * Set on responses from `offices.create` when the dashboard returned the
+     * caller's pre-existing colony instead of creating a new one. The dashboard
+     * deduplicates per-user creates so onboarding can call POST /api/offices
+     * idempotently. When `existing: true`, the requested `name` was IGNORED —
+     * `name` and `id` reflect the colony you already own.
+     *
+     * Pass `forceCreate: true` to bypass the dedup and create a second colony.
+     */
+    existing?: boolean;
 }
 export interface CreateOfficeRequest {
     name: string;
-    owner_id: string;
+    owner_id?: string;
+    /**
+     * Bypass the per-user dedup guard. Without this flag, if you already own a
+     * non-archived colony the dashboard returns it (with `existing: true`) and
+     * ignores the requested `name`. With this flag, a new colony is always
+     * created. Mirrors the dashboard's office-selector UI which always sends
+     * `forceCreate: true` for the explicit "create new colony" button.
+     */
+    forceCreate?: boolean;
 }
 export interface OfficeSettings {
     [key: string]: unknown;

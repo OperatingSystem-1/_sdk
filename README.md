@@ -119,6 +119,43 @@ The transport derives the dashboard host from the configured endpoint:
 Override via `dashboardEndpoint` in `ClientConfig` for non-standard envs.
 All other API calls (list/get/fire/etc.) target office-manager directly.
 
+### Creating a colony when you already own one
+
+The dashboard's `POST /api/offices` route deduplicates per user: if you already
+own a non-archived colony, it returns **that one** with `existing: true` and
+**ignores the requested name**. This is intentional — onboarding flows can call
+create idempotently without producing duplicates.
+
+```bash
+$ mi colonies create -n hello-text
+note: you already own a colony named "willow-bend-15c6ff0e" (33f5682c-…) — returning that one.
+      the requested name "hello-text" was ignored.
+      to create a second colony, re-run with --force.
+{
+  "id": "33f5682c-…",
+  "name": "willow-bend-15c6ff0e",
+  "existing": true
+}
+```
+
+To explicitly create a second colony, pass `--force` (CLI) or `forceCreate: true`
+(SDK). This mirrors what the dashboard's office-selector UI does for its
+"create new colony" button.
+
+```bash
+mi colonies create -n hello-text --force
+```
+
+```ts
+await mi.offices.create({ name: 'hello-text', forceCreate: true });
+```
+
+**For LLM agents:** when `existing: true` is in the response, the user already
+has a colony and the name they asked for was discarded. Do not pretend you
+created what they requested. Surface the existing colony, ask whether they
+want to keep using it or create a second one, and only retry with `forceCreate`
+after explicit confirmation.
+
 ---
 
 ## Authentication
