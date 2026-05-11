@@ -177,6 +177,60 @@ offices
     console.log(`Deleted office ${officeId}`);
   });
 
+const officeSettings = offices
+  .command('settings')
+  .description('Office settings (defaults for new agents, hiring controls)');
+
+officeSettings
+  .command('get <officeId>')
+  .description('Show current office settings')
+  .action(async (officeId) => {
+    const client = await getClient();
+    json(await client.offices.getSettings(officeId));
+  });
+
+// Parse a string flag value as a strict boolean. Rejects ambiguous inputs so
+// scripts fail loudly rather than silently writing the wrong value to OM.
+function parseBoolFlag(name: string, value: string): boolean {
+  const v = value.toLowerCase();
+  if (v === 'true' || v === '1' || v === 'on' || v === 'yes') return true;
+  if (v === 'false' || v === '0' || v === 'off' || v === 'no') return false;
+  throw new Error(`--${name} must be true|false (got "${value}")`);
+}
+
+officeSettings
+  .command('set <officeId>')
+  .description('Update office settings — only flags you pass are changed')
+  .option(
+    '--allow-agent-hiring <bool>',
+    'Allow agents in this office to hire other agents via the SDK (true|false). ' +
+      'OFF by default; subject to credits, max-employees cap, and 3-per-10-min rate limit. ' +
+      'Gated server-side at office-manager employees.go:464.',
+  )
+  .option('--max-employees <n>', 'Cap on simultaneous agents in this office (1–50)')
+  .option('--model-provider <provider>', 'Default LLM provider for new agents')
+  .option('--default-model-tier <tier>', 'Default model tier (opus|sonnet|haiku)')
+  .action(async (officeId, opts) => {
+    const patch: Record<string, unknown> = {};
+    if (opts.allowAgentHiring !== undefined) {
+      patch.allow_agent_hiring = parseBoolFlag('allow-agent-hiring', opts.allowAgentHiring);
+    }
+    if (opts.maxEmployees !== undefined) {
+      const n = Number.parseInt(opts.maxEmployees, 10);
+      if (!Number.isInteger(n) || n < 1 || n > 50) {
+        throw new Error(`--max-employees must be an integer between 1 and 50 (got "${opts.maxEmployees}")`);
+      }
+      patch.max_employees = n;
+    }
+    if (opts.modelProvider !== undefined) patch.modelProvider = opts.modelProvider;
+    if (opts.defaultModelTier !== undefined) patch.defaultModelTier = opts.defaultModelTier;
+    if (Object.keys(patch).length === 0) {
+      throw new Error('no settings provided — pass at least one flag (see --help)');
+    }
+    const client = await getClient();
+    json(await client.offices.updateSettings(officeId, patch));
+  });
+
 // ─── agents ──────────────────────────────────────────────────────────────────
 
 const agents = program.command('agents').description('Agent management');
