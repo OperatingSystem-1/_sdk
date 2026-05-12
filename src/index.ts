@@ -11,6 +11,7 @@ export { CloneAPI } from './api/clone.js';
 export { JoinAPI } from './api/join.js';
 export { HeartbeatAPI } from './api/heartbeat.js';
 export { ColonyAPI } from './api/colony.js';
+export { MarketplaceAPI } from './api/marketplace.js';
 export { MessageListener } from './api/messages.js';
 export type { XMTPMessage } from './api/messages.js';
 export { waitForCloneOnline } from './api/clone-status.js';

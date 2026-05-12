@@ -501,14 +501,38 @@ envCmd
 
 const taskCmd = program.command('tasks').description('Task queue');
 
+// Task commands route to office-manager (not dashboard) since tasks live
+// in the per-office shared Postgres managed by office-manager.
+function getTaskClient(opts: { endpoint?: string }): OS1Client {
+  const config = loadConfig();
+  let endpoint = opts.endpoint || config.officeManagerUrl;
+  if (!endpoint) {
+    // Derive office-manager URL from dashboard endpoint.
+    // https://mitosislabs.ai → https://m.mitosislabs.ai
+    // https://dev.mitosislabs.ai → https://m.mitosislabs.ai (dev OM is same as prod)
+    // https://localhost:3000 → http://localhost:8080 (local dev)
+    const ep = config.endpoint;
+    if (ep.includes('localhost') || ep.includes('127.0.0.1')) {
+      endpoint = 'http://localhost:8080';
+    } else {
+      endpoint = ep.replace(/^(https?:\/\/)(dev\.)?/, '$1m.').replace('m.www.', 'm.');
+    }
+  }
+  return new OS1Client({
+    endpoint,
+    auth: { type: 'token', token: config.key },
+  });
+}
+
 taskCmd
   .command('list')
   .option('-c, --colony <id>', 'Colony ID')
   .option('-o, --office <id>')
+  .option('-e, --endpoint <url>', 'Office-manager endpoint override')
   .option('-s, --status <status>', 'Filter by status')
   .option('-l, --limit <n>', 'Limit', '20')
   .action(async (opts) => {
-    const tasks = await getClient().tasks.list(getOfficeId(opts), {
+    const tasks = await getTaskClient(opts).tasks.list(getOfficeId(opts), {
       status: opts.status,
       limit: parseInt(opts.limit, 10),
     });
@@ -527,34 +551,61 @@ taskCmd
   .command('create')
   .option('-c, --colony <id>', 'Colony ID')
   .option('-o, --office <id>')
+  .option('-e, --endpoint <url>', 'Office-manager endpoint override')
   .requiredOption('-t, --title <title>', 'Task title')
   .option('-d, --desc <description>', 'Description')
   .option('-p, --priority <n>', 'Priority (0-10)')
-  .option('-k, --kind <kind>', 'Task kind')
+  .option('-k, --kind <kind>', 'Task kind (general|code|research|browser|review|verify)')
+  .option('-a, --assign <agent>', 'Assign to agent')
   .action(async (opts) => {
-    const task = await getClient().tasks.create(getOfficeId(opts), {
+    const task = await getTaskClient(opts).tasks.create(getOfficeId(opts), {
       title: opts.title,
       description: opts.desc,
       priority: opts.priority ? parseInt(opts.priority, 10) : undefined,
       kind: opts.kind,
+      assignedAgent: opts.assign,
     });
-    console.log(`Created task ${task.id}`);
+    const assigned = opts.assign ? ` → ${opts.assign}` : '';
+    console.log(`Created task #${task.id}${assigned}`);
   });
 
 taskCmd
   .command('get <taskId>')
   .option('-c, --colony <id>', 'Colony ID')
   .option('-o, --office <id>')
+  .option('-e, --endpoint <url>', 'Office-manager endpoint override')
   .action(async (taskId, opts) => {
-    jsonOut(await getClient().tasks.get(getOfficeId(opts), taskId));
+    jsonOut(await getTaskClient(opts).tasks.get(getOfficeId(opts), taskId));
   });
 
 taskCmd
   .command('stats')
   .option('-c, --colony <id>', 'Colony ID')
   .option('-o, --office <id>')
+  .option('-e, --endpoint <url>', 'Office-manager endpoint override')
   .action(async (opts) => {
-    jsonOut(await getClient().tasks.stats(getOfficeId(opts)));
+    jsonOut(await getTaskClient(opts).tasks.stats(getOfficeId(opts)));
+  });
+
+taskCmd
+  .command('watch <taskId>')
+  .description('Watch a task until it completes')
+  .option('-c, --colony <id>', 'Colony ID')
+  .option('-o, --office <id>')
+  .option('-e, --endpoint <url>', 'Office-manager endpoint override')
+  .option('--poll <ms>', 'Poll interval in ms', '5000')
+  .option('--timeout <ms>', 'Timeout in ms', '600000')
+  .action(async (taskId, opts) => {
+    const client = getTaskClient(opts);
+    const officeId = getOfficeId(opts);
+    console.log(`Watching task #${taskId}...`);
+    const result = await client.tasks.watch(officeId, taskId, {
+      onProgress: (log) => console.log(`  [${log.event}] ${log.message}`),
+      onDone: (task) => console.log(`\nTask #${task.id} completed: ${(task as any).resultSummary || 'done'}`),
+      onFailed: (task) => console.log(`\nTask #${task.id} failed: ${(task as any).errorMessage || 'unknown error'}`),
+      onChange: (task) => console.log(`  Status: ${task.status}`),
+    }, parseInt(opts.poll, 10), parseInt(opts.timeout, 10));
+    if (result.status === 'failed' || result.status === 'cancelled') process.exit(1);
   });
 
 // ─── files ──────────────────────────────────────────────────────────────────
@@ -915,7 +966,9 @@ agent
   .option('-n, --name <name>', 'Agent name (required)')
   .option('-e, --endpoint <url>', 'Dashboard endpoint', 'https://mitosislabs.ai')
   .action(async (codeOrUrl: string, opts: { name?: string; endpoint: string }) => {
-    if (!opts.name) die('Agent name required: mi agent join <CODE> -n <name>');
+    const existingConfig = peekConfig();
+    const agentName = opts.name || existingConfig?.agentId;
+    if (!agentName) die('Agent name required: mi agent join <CODE> -n <name>');
     const endpoint = opts.endpoint;
     const code = extractInviteCode(codeOrUrl);
     const { getOrCreateKeypair } = await import('../auth/keys.js');
@@ -926,7 +979,7 @@ agent
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         code,
-        agent_name: opts.name,
+        agent_name: agentName,
         public_key: kp.publicKey,
         xmtp_address: kp.address,
       }),
@@ -1300,7 +1353,8 @@ agent
   .action(async (codeOrUrl: string, opts: { name?: string; endpoint: string; clone: boolean; chat: boolean; statement?: string; stateDir?: string; runtimeDir?: string; exclude: string; transfer: boolean }) => {
     const endpoint = opts.endpoint;
     const code = extractInviteCode(codeOrUrl);
-    const agentName = opts.name || `agent-${Date.now().toString(36)}`;
+    const existingConfig = peekConfig();
+    const agentName = opts.name || existingConfig?.agentId || `agent-${Date.now().toString(36)}`;
 
     console.log(`\nConnecting to ${endpoint}...\n`);
 

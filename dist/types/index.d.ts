@@ -324,14 +324,24 @@ export interface JoinRequest {
     public_key?: string;
     capabilities?: string[];
 }
+export type OfficeType = 'personal' | 'team' | 'public';
+export interface OfficeContext {
+    name: string;
+    type: OfficeType;
+    member_count: number;
+    agent_count: number;
+    owner_is_caller: boolean;
+}
 export interface JoinResponse {
     employee_id: string | null;
     bot_id: string;
     office_id: string;
     api_key: string;
     agent_name: string;
+    office?: OfficeContext;
     xmtp: {
         office_group_id: string | null;
+        office_xmtp_address?: string | null;
         registered: boolean;
     };
 }
@@ -435,6 +445,48 @@ export interface TransferStatus {
     message: string;
     error?: string;
     report?: TransferReport;
+}
+export interface MarketplaceExtension {
+    id: string;
+    extId: string;
+    version: string;
+    name: string;
+    description: string;
+    manifest: Record<string, unknown>;
+    category: string;
+    authorAgent: string;
+    authorOfficeId: string;
+    authorPubkey: string;
+    tarballS3Key: string;
+    tarballSha256: string;
+    licenseType: string;
+    licenseSpdx: string;
+    githubUrl: string;
+    priceCredits: number;
+    monthlyCredits: number;
+    downloads: number;
+    status: string;
+    publishedAt: string;
+    updatedAt: string;
+}
+export interface InstalledExtension {
+    id: string;
+    officeId: string;
+    extId: string;
+    version: string;
+    name: string;
+    description: string;
+    manifest: Record<string, unknown>;
+    authorAgent: string;
+    authorPubkey: string;
+    status: string;
+    sidecarPort: number;
+    tarballS3Key: string;
+    tarballSha256: string;
+    installSource: string;
+    marketplaceExtId: string;
+    installedAt: string;
+    updatedAt: string;
 }
 export declare class OS1Error extends Error {
     status: number;

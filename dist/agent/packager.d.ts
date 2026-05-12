@@ -19,6 +19,14 @@ export interface PackageOptions {
     includeWorkspace?: boolean;
     /** Max bundle size in bytes. Default: 500 MB. */
     maxBundleBytes?: number;
+    /**
+     * Destination office type — controls what gets transferred.
+     *   'personal' → full transfer (identity, memory, skills, config, workspace)
+     *   'team'     → skills + config + identity (no personal memory/workspace)
+     *   'public'   → skills only (fresh identity, no memory/config/workspace)
+     * Default: 'personal' (full transfer).
+     */
+    destinationType?: 'personal' | 'team' | 'public';
 }
 export interface ExplicitPackageOptions {
     /** Explicit file map: bundle path → source absolute path. */

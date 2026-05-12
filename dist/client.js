@@ -12,6 +12,7 @@ import { JoinAPI } from './api/join.js';
 import { HeartbeatAPI } from './api/heartbeat.js';
 import { MessageListener } from './api/messages.js';
 import { ColonyAPI } from './api/colony.js';
+import { MarketplaceAPI } from './api/marketplace.js';
 /**
  * OS-1 SDK client.
  *
@@ -41,6 +42,7 @@ export class OS1Client {
     heartbeat;
     messages;
     colony;
+    marketplace;
     constructor(config) {
         this.transport = new Transport(config);
         this.offices = new OfficesAPI(this.transport);
@@ -56,6 +58,7 @@ export class OS1Client {
         this.heartbeat = new HeartbeatAPI(this.transport);
         this.messages = new MessageListener(this.transport, config);
         this.colony = new ColonyAPI(this.transport, this.agents, this.tasks);
+        this.marketplace = new MarketplaceAPI(this.transport);
     }
     /** Health check — verify connectivity. */
     async health() {
