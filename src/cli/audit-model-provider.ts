@@ -1,8 +1,10 @@
 import { Command } from 'commander';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { OS1AdminClient } from '../client.js';
 import {
-  findHermesConfigToml,
+  findHermesConfig,
   findHermesEnv,
   resolveOpenClawContext,
   resolvePlatform,
@@ -261,16 +263,21 @@ async function auditOpenClawProvider(opts: { office?: string; agent?: string }):
 }
 
 function auditHermesProvider(opts: { hermesEnv?: string; hermesConfig?: string }): Report {
-  const tomlFile = findHermesConfigToml(opts.hermesConfig);
+  const cfgFile = findHermesConfig(opts.hermesConfig);
   const envFile = findHermesEnv(opts.hermesEnv);
 
-  const modelSection = tomlFile?.values?.['model'] ?? {};
+  const modelSection = cfgFile?.values?.['model'] ?? {};
   const providerId = modelSection['provider'];
-  const modelId = modelSection['model'];
+  // hermes yaml uses `model.default` for the model id; pjbrain's toml example uses `model.model`
+  const modelId = modelSection['default'] ?? modelSection['model'];
   const classified = classify(providerId);
 
   const notes: string[] = [];
-  notes.push(tomlFile ? `config: ${tomlFile.path}` : 'config: ~/.hermes/config.toml not found');
+  notes.push(
+    cfgFile
+      ? `config: ${cfgFile.path}`
+      : 'config: ~/.hermes/config.yaml (or .toml) not found',
+  );
   notes.push(envFile ? `env file: ${envFile.path}` : 'env file: ~/.hermes/.env not found');
   notes.push(`provider: ${classified.displayName} [${classified.verdict}]`);
   notes.push(`model:    ${modelId ?? '(unset)'}`);
@@ -284,24 +291,44 @@ function auditHermesProvider(opts: { hermesEnv?: string; hermesConfig?: string }
     VENICE_API_KEY: process.env.VENICE_API_KEY,
     ...(envFile?.values ?? {}),
   };
+  // Hermes auth options for anthropic: API key, OR Claude Max OAuth via
+  // ~/.hermes/auth.json (per pjbrain/ARCHITECTURE.md). Accept either.
   const expectedKey = providerExpectedKey(classified.canonicalId);
+  let credentialOk = false;
   if (expectedKey) {
-    notes.push(
-      `${envValues[expectedKey] ? '[OK]  ' : '[MISS]'} ${expectedKey} (required for ${classified.displayName})`,
-    );
+    credentialOk = Boolean(envValues[expectedKey]);
+  }
+  if (classified.canonicalId === 'anthropic' && !credentialOk) {
+    const authPath = join(homedir(), '.hermes', 'auth.json');
+    if (existsSync(authPath)) {
+      credentialOk = true;
+      notes.push(`[OK]   Claude Max OAuth (~/.hermes/auth.json) — alternative to ANTHROPIC_API_KEY`);
+    }
+  }
+  if (expectedKey && !credentialOk) {
+    notes.push(`[MISS] ${expectedKey} (required for ${classified.displayName})`);
+  } else if (expectedKey && envValues[expectedKey]) {
+    notes.push(`[OK]   ${expectedKey} (required for ${classified.displayName})`);
   }
   notes.push('');
   notes.push(`why: ${classified.reason}`);
 
   const status = verdictToStatus(classified.verdict);
 
+  // Reflect the file format we actually read so the remediation matches
+  // what the user has on disk (yaml on real hermes; toml in pjbrain example).
+  const isYaml = cfgFile ? !cfgFile.path.endsWith('.toml') : true;
+  const configPath = cfgFile?.path ?? '~/.hermes/config.yaml';
+
   const remediation: string[] = [];
   if (classified.verdict === 'unsafe') {
+    remediation.push(`Move hermes to a private-inference provider by editing ${configPath}:`);
+    if (isYaml) {
+      remediation.push('  model:', '    provider: amazon-bedrock', '    default: amazon-bedrock/claude-sonnet-4-5-20250929-v1:0');
+    } else {
+      remediation.push('  [model]', '  provider = "amazon-bedrock"', '  model    = "claude-sonnet-4-5-20250929-v1:0"');
+    }
     remediation.push(
-      'Move hermes to a private-inference provider by editing ~/.hermes/config.toml:',
-      '  [model]',
-      '  provider = "amazon-bedrock"',
-      '  model    = "claude-sonnet-4-5-20250929-v1:0"',
       'Set AWS credentials in ~/.hermes/.env:',
       '  AWS_ACCESS_KEY_ID=...',
       '  AWS_SECRET_ACCESS_KEY=...',
@@ -310,15 +337,24 @@ function auditHermesProvider(opts: { hermesEnv?: string; hermesConfig?: string }
     );
   } else if (classified.verdict === 'unknown' && !providerId) {
     remediation.push(
-      'No [model] section in ~/.hermes/config.toml. Add:',
+      'No `model.provider` in ~/.hermes/config.yaml. Add (yaml):',
+      '  model:',
+      '    provider: amazon-bedrock',
+      '    default: amazon-bedrock/claude-sonnet-4-5-20250929-v1:0',
+      'Or, for pjbrain-style toml at ~/.hermes/config.toml:',
       '  [model]',
       '  provider = "amazon-bedrock"',
       '  model    = "claude-sonnet-4-5-20250929-v1:0"',
     );
-  } else if (expectedKey && !envValues[expectedKey]) {
+  } else if (expectedKey && !credentialOk) {
     remediation.push(
       `Set ${expectedKey} in ~/.hermes/.env — the provider is configured but the credential is missing.`,
     );
+    if (classified.canonicalId === 'anthropic') {
+      remediation.push(
+        `Alternatively, log in with Claude Max OAuth so ~/.hermes/auth.json exists (no API key needed).`,
+      );
+    }
   }
 
   return {
@@ -326,7 +362,7 @@ function auditHermesProvider(opts: { hermesEnv?: string; hermesConfig?: string }
     title: 'Mitosis Model Provider Audit',
     platform: 'hermes',
     context: {
-      hermes_config_path: tomlFile?.path,
+      hermes_config_path: cfgFile?.path,
       hermes_env_path: envFile?.path,
       home: homedir(),
     },
@@ -355,8 +391,9 @@ export function registerModelProviderCommand(parent: Command): void {
     .option('-o, --office <officeId>', 'Office ID (openclaw)')
     .option('-a, --agent <name>', 'Agent name (openclaw)')
     .option('--hermes-env <path>', 'Path to hermes .env (default: ~/.hermes/.env)')
-    .option('--hermes-config <path>', 'Path to hermes config.toml (default: ~/.hermes/config.toml)')
+    .option('--hermes-config <path>', 'Path to hermes config (default: ~/.hermes/config.yaml, falls back to config.toml)')
     .option('--json', 'Emit JSON instead of human-readable text')
+    .option('--no-save', 'Do not persist this audit result to ~/.os1/settings.json')
     .action(
       async (opts: {
         platform?: string;
@@ -365,6 +402,7 @@ export function registerModelProviderCommand(parent: Command): void {
         hermesEnv?: string;
         hermesConfig?: string;
         json?: boolean;
+        save?: boolean;
       }) => {
         const platform = resolvePlatform(opts.platform);
         const report =
@@ -374,7 +412,7 @@ export function registerModelProviderCommand(parent: Command): void {
                 hermesEnv: opts.hermesEnv,
                 hermesConfig: opts.hermesConfig,
               });
-        emitReportAndExit(report, Boolean(opts.json));
+        emitReportAndExit(report, Boolean(opts.json), { save: opts.save });
       },
     );
 }

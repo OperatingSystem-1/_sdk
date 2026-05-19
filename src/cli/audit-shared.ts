@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export type Platform = 'openclaw' | 'hermes';
 export type SurfaceStatus = 'connected' | 'partial' | 'disconnected' | 'unknown';
@@ -198,6 +198,77 @@ export function findHermesConfigToml(override?: string): FoundFile<TomlTable> | 
   );
 }
 
+// Minimal YAML reader for the shape Hermes actually writes:
+//   section_name:
+//     key: value
+//     other: "quoted value"
+//   another_section: {}
+// Supports top-level scalar sections (2-space-indented `key: value`).
+// Ignores nested maps, lists, multi-line strings — they are not needed
+// for the model-provider audit and would require a real YAML lib.
+export function parseSimpleYaml(text: string): TomlTable {
+  const out: TomlTable = {};
+  let section = '';
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\s+#.*$/, '');
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+
+    const topMatch = line.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
+    if (topMatch) {
+      section = topMatch[1];
+      if (!out[section]) out[section] = {};
+      // top-level scalar like `key: value` (no children) — record under '' section too
+      const rest = topMatch[2].trim();
+      if (rest && rest !== '{}' && rest !== '[]' && !rest.startsWith('|') && !rest.startsWith('>')) {
+        out[''] = out[''] ?? {};
+        out[''][section] = unquote(rest);
+      }
+      continue;
+    }
+    const childMatch = line.match(/^  ([A-Za-z_][\w-]*):\s*(.*)$/);
+    if (childMatch && section) {
+      const key = childMatch[1];
+      const rest = childMatch[2].trim();
+      if (rest && rest !== '{}' && rest !== '[]' && !rest.startsWith('|') && !rest.startsWith('>')) {
+        out[section][key] = unquote(rest);
+      }
+    }
+  }
+  return out;
+}
+
+function unquote(v: string): string {
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    return v.slice(1, -1);
+  }
+  return v;
+}
+
+// Find hermes config across the formats hermes actually writes (yaml is
+// canonical on the deployed runtime; toml only appears in pjbrain's
+// example file). Dispatches the parser by extension.
+export function findHermesConfig(override?: string): FoundFile<TomlTable> | undefined {
+  const candidates = [
+    override,
+    process.env.HERMES_CONFIG_FILE,
+    join(homedir(), '.hermes', 'config.yaml'),
+    join(homedir(), '.hermes', 'config.yml'),
+    join(homedir(), '.hermes', 'config.toml'),
+  ].filter(Boolean) as string[];
+
+  for (const path of candidates) {
+    try {
+      if (!existsSync(path)) continue;
+      const text = readFileSync(path, 'utf8');
+      const parser = path.endsWith('.toml') ? parseToml : parseSimpleYaml;
+      return { path, values: parser(text) };
+    } catch {
+      // skip
+    }
+  }
+  return undefined;
+}
+
 export function render(report: Report): string {
   const lines: string[] = [];
   lines.push(report.title);
@@ -234,9 +305,96 @@ export function render(report: Report): string {
   return lines.join('\n');
 }
 
-export function emitReportAndExit(report: Report, json: boolean): void {
-  if (json) console.log(JSON.stringify(report, null, 2));
-  else console.log(render(report));
+// Settings file: keyed by subcommand. Each `mi audit <name>` overwrites its
+// own slot; other slots are preserved. Later read by `mi onboard <name>` to
+// know what state to walk the user through, and by future tooling (`mi
+// backup` refusing to proceed when `audits["model-provider"].overall ===
+// "disconnected"`).
+//
+// Path: ~/.os1/settings.json, mode 0600 (matches keystore convention even
+// though no secrets are stored — the file may name internal office UUIDs
+// and agent names which are not meant for casual sharing).
+
+export const SETTINGS_PATH = join(homedir(), '.os1', 'settings.json');
+export const SETTINGS_VERSION = 1;
+
+export interface SettingsFile {
+  version: number;
+  updatedAt: string;
+  audits: Record<string, { auditedAt: string; report: Report }>;
+}
+
+function emptySettings(): SettingsFile {
+  return { version: SETTINGS_VERSION, updatedAt: '', audits: {} };
+}
+
+export function readSettings(): SettingsFile {
+  if (!existsSync(SETTINGS_PATH)) return emptySettings();
+  try {
+    const parsed = JSON.parse(readFileSync(SETTINGS_PATH, 'utf8'));
+    return {
+      version: parsed.version ?? SETTINGS_VERSION,
+      updatedAt: parsed.updatedAt ?? '',
+      audits: parsed.audits ?? {},
+    };
+  } catch {
+    return emptySettings();
+  }
+}
+
+function auditKey(report: Report): string {
+  // "audit data-access" -> "data-access"; defensively fall back to full command.
+  const m = report.command.match(/^audit\s+(.+)$/);
+  return m ? m[1] : report.command;
+}
+
+export function saveAuditResult(report: Report): string {
+  const now = new Date().toISOString();
+  const settings = readSettings();
+  settings.audits[auditKey(report)] = { auditedAt: now, report };
+  settings.updatedAt = now;
+  settings.version = SETTINGS_VERSION;
+
+  mkdirSync(dirname(SETTINGS_PATH), { recursive: true });
+  const tmp = SETTINGS_PATH + '.tmp';
+  writeFileSync(tmp, JSON.stringify(settings, null, 2));
+  try {
+    chmodSync(tmp, 0o600);
+  } catch {
+    // chmod is best-effort; rename will still succeed
+  }
+  renameSync(tmp, SETTINGS_PATH);
+  return SETTINGS_PATH;
+}
+
+export function emitReportAndExit(
+  report: Report,
+  json: boolean,
+  opts?: { save?: boolean },
+): void {
+  const save = opts?.save !== false;
+
+  if (json) {
+    if (save) {
+      try {
+        saveAuditResult(report);
+      } catch {
+        // do not pollute JSON output with warning text
+      }
+    }
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log(render(report));
+    if (save) {
+      try {
+        const path = saveAuditResult(report);
+        console.log(`[saved] ${path}  (key: ${auditKey(report)})`);
+      } catch (err) {
+        console.error(`[warn] could not save settings: ${(err as Error).message}`);
+      }
+    }
+  }
+
   if (report.overall === 'disconnected') process.exitCode = 2;
   else if (report.overall === 'partial' || report.overall === 'unknown') process.exitCode = 1;
 }

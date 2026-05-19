@@ -208,6 +208,7 @@ export function registerDataAccessCommand(parent: Command): void {
     .option('-a, --agent <name>', 'Agent name (openclaw)')
     .option('--hermes-env <path>', 'Path to hermes .env (default: ~/.hermes/.env)')
     .option('--json', 'Emit JSON instead of human-readable text')
+    .option('--no-save', 'Do not persist this audit result to ~/.os1/settings.json')
     .action(
       async (opts: {
         platform?: string;
@@ -215,13 +216,14 @@ export function registerDataAccessCommand(parent: Command): void {
         agent?: string;
         hermesEnv?: string;
         json?: boolean;
+        save?: boolean;
       }) => {
         const platform = resolvePlatform(opts.platform);
         const report =
           platform === 'openclaw'
             ? await auditOpenClaw({ office: opts.office, agent: opts.agent })
             : auditHermes(opts.hermesEnv);
-        emitReportAndExit(report, Boolean(opts.json));
+        emitReportAndExit(report, Boolean(opts.json), { save: opts.save });
       },
     );
 }
