@@ -12,46 +12,47 @@ import type {
   DiffSnapshotsRequest,
 } from '../types/index.js';
 
-function base(officeId: string) {
+function omBase(officeId: string) {
   return `/api/v1/offices/${officeId}`;
 }
 
 /**
  * Unified Backups API module.
  *
- * Provides both legacy backup endpoints (workspace-only tar-to-S3) and the
- * new snapshot-based backup provider framework with point-in-time capture,
- * diff, restore, and scheduling across all data surfaces.
+ * Legacy endpoints hit office-manager (workspace tar-to-S3).
+ * New snapshot endpoints hit the Next.js dashboard API (/api/snapshots).
+ * The officeId parameter on snapshot methods is accepted for interface
+ * compatibility but the API is user-scoped (auth determines the user).
  */
 export class BackupsAPI {
   constructor(private transport: Transport) {}
 
-  // ─── Legacy endpoints (workspace-only backups) ──────────────────────────
+  // ─── Legacy endpoints (office-manager, workspace-only backups) ──────────
 
   /** List legacy workspace backups for an office. */
   async list(officeId: string, opts?: { employee?: string }): Promise<Backup[]> {
-    return this.transport.get<Backup[]>(`${base(officeId)}/backups`, opts);
+    return this.transport.get<Backup[]>(`${omBase(officeId)}/backups`, opts);
   }
 
   /** Get a legacy workspace backup by ID. */
   async get(officeId: string, backupId: string): Promise<Backup> {
-    return this.transport.get<Backup>(`${base(officeId)}/backups/${backupId}`);
+    return this.transport.get<Backup>(`${omBase(officeId)}/backups/${backupId}`);
   }
 
   /** Delete a legacy workspace backup. */
   async delete(officeId: string, backupId: string): Promise<void> {
-    await this.transport.delete(`${base(officeId)}/backups/${backupId}`);
+    await this.transport.delete(`${omBase(officeId)}/backups/${backupId}`);
   }
 
-  // ─── Snapshots (new backup provider framework) ──────────────────────────
+  // ─── Snapshots (Next.js dashboard API — user-scoped) ───────────────────
 
   /** Create a point-in-time snapshot across all data surfaces. */
-  async createSnapshot(officeId: string, req: CreateSnapshotRequest): Promise<BackupManifest> {
-    return this.transport.post<BackupManifest>(`${base(officeId)}/snapshots`, req);
+  async createSnapshot(_officeId: string, req: CreateSnapshotRequest): Promise<BackupManifest> {
+    return this.transport.post<BackupManifest>('/api/snapshots', req);
   }
 
-  /** List snapshots for an office, optionally filtered. */
-  async listSnapshots(officeId: string, opts?: {
+  /** List snapshots, optionally filtered. */
+  async listSnapshots(_officeId: string, opts?: {
     agentName?: string;
     limit?: number;
     offset?: number;
@@ -59,63 +60,63 @@ export class BackupsAPI {
     until?: string;
   }): Promise<{ snapshots: BackupManifest[]; total: number }> {
     return this.transport.get<{ snapshots: BackupManifest[]; total: number }>(
-      `${base(officeId)}/snapshots`,
+      '/api/snapshots',
       opts as Record<string, string>,
     );
   }
 
   /** Get a specific snapshot manifest. */
-  async getSnapshot(officeId: string, snapshotId: string): Promise<BackupManifest> {
-    return this.transport.get<BackupManifest>(`${base(officeId)}/snapshots/${snapshotId}`);
+  async getSnapshot(_officeId: string, snapshotId: string): Promise<BackupManifest> {
+    return this.transport.get<BackupManifest>(`/api/snapshots/${snapshotId}`);
   }
 
   /** Delete a snapshot and all its archived data. */
-  async deleteSnapshot(officeId: string, snapshotId: string): Promise<void> {
-    await this.transport.delete(`${base(officeId)}/snapshots/${snapshotId}`);
+  async deleteSnapshot(_officeId: string, snapshotId: string): Promise<void> {
+    await this.transport.delete(`/api/snapshots/${snapshotId}`);
   }
 
   // ─── Restore ────────────────────────────────────────────────────────────
 
   /** Restore from a snapshot. */
-  async restore(officeId: string, req: RestoreFromSnapshotRequest): Promise<RestoreResult> {
-    return this.transport.post<RestoreResult>(`${base(officeId)}/snapshots/restore`, req);
+  async restore(_officeId: string, req: RestoreFromSnapshotRequest): Promise<RestoreResult> {
+    return this.transport.post<RestoreResult>('/api/snapshots/restore', req);
   }
 
   // ─── Diff ───────────────────────────────────────────────────────────────
 
   /** Compute diff between two snapshots. */
-  async diff(officeId: string, req: DiffSnapshotsRequest): Promise<BackupDiff> {
-    return this.transport.post<BackupDiff>(`${base(officeId)}/snapshots/diff`, req);
+  async diff(_officeId: string, req: DiffSnapshotsRequest): Promise<BackupDiff> {
+    return this.transport.post<BackupDiff>('/api/snapshots/diff', req);
   }
 
   // ─── Schedules ──────────────────────────────────────────────────────────
 
   /** Create or update a backup schedule. */
   async upsertSchedule(
-    officeId: string,
+    _officeId: string,
     agentName: string | undefined,
     config: BackupScheduleConfig,
   ): Promise<BackupSchedule> {
-    return this.transport.put<BackupSchedule>(`${base(officeId)}/snapshots/schedules`, {
+    return this.transport.put<BackupSchedule>('/api/snapshots/schedules', {
       agentName,
       ...config,
     });
   }
 
-  /** List backup schedules for an office. */
-  async listSchedules(officeId: string): Promise<BackupSchedule[]> {
-    return this.transport.get<BackupSchedule[]>(`${base(officeId)}/snapshots/schedules`);
+  /** List backup schedules. */
+  async listSchedules(_officeId: string): Promise<BackupSchedule[]> {
+    return this.transport.get<BackupSchedule[]>('/api/snapshots/schedules');
   }
 
   /** Delete a backup schedule. */
-  async deleteSchedule(officeId: string, scheduleId: string): Promise<void> {
-    await this.transport.delete(`${base(officeId)}/snapshots/schedules/${scheduleId}`);
+  async deleteSchedule(_officeId: string, scheduleId: string): Promise<void> {
+    await this.transport.delete(`/api/snapshots/schedules/${scheduleId}`);
   }
 
   // ─── Health ─────────────────────────────────────────────────────────────
 
   /** Check backup health and configuration status. */
-  async health(officeId: string): Promise<BackupHealthStatus> {
-    return this.transport.get<BackupHealthStatus>(`${base(officeId)}/snapshots/health`);
+  async health(_officeId: string): Promise<BackupHealthStatus> {
+    return this.transport.get<BackupHealthStatus>('/api/snapshots/health');
   }
 }
