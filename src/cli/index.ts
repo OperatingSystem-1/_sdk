@@ -6,6 +6,7 @@ import { Keystore } from '../auth/keystore.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { registerAuditCommand } from './audit.js';
 
 const program = new Command();
 
@@ -487,6 +488,10 @@ program
     const result = await client.transport.request(method.toUpperCase(), path, { body });
     json(result);
   });
+
+// ─── audit ───────────────────────────────────────────────────────────────────
+
+registerAuditCommand(program);
 
 // ─── Run ─────────────────────────────────────────────────────────────────────
 
