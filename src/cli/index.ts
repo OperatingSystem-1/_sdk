@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { registerAuditCommand } from './audit.js';
+import { registerBackupCommand } from './backup.js';
 
 const program = new Command();
 
@@ -491,7 +492,11 @@ program
 
 // ─── audit ───────────────────────────────────────────────────────────────────
 
-registerAuditCommand(program);
+registerAuditCommand(program, getClient);
+
+// ─── backup ─────────────────────────────────────────────────────────────────
+
+registerBackupCommand(program, getClient);
 
 // ─── Run ─────────────────────────────────────────────────────────────────────
 

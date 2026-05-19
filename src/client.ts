@@ -1,4 +1,4 @@
-import type { ClientConfig } from './types/index.js';
+import type { ClientConfig, BackupPlatform } from './types/index.js';
 import { Transport } from './transport.js';
 import { Keystore } from './auth/keystore.js';
 import { OfficesAPI } from './api/offices.js';
@@ -9,10 +9,10 @@ import { CreditsAPI } from './api/credits.js';
 import { XMTPAPI } from './api/xmtp.js';
 import { IntegrationsAPI } from './api/integrations.js';
 import { ExtensionsAPI } from './api/extensions.js';
+import { BackupsAPI } from './api/backups.js';
 import {
   EventsAPI,
   CallbacksAPI,
-  BackupsAPI,
   EnvAPI,
   DelegatesAPI,
   MessagesAPI,
@@ -26,6 +26,9 @@ import {
   ProxyAPI,
 } from './api/events.js';
 import { XMTPChannel } from './xmtp/channel.js';
+import type { BackupProvider } from './api/backup-provider.js';
+import { OpenClawBackupProvider } from './api/backup-openclaw.js';
+import { HermesBackupProvider } from './api/backup-hermes.js';
 
 /**
  * OS-1 Admin SDK client.
@@ -162,6 +165,19 @@ export class OS1AdminClient {
     } catch (err: any) {
       return { ok: false, method: 'jwt', error: err.message };
     }
+  }
+
+  /**
+   * Get a backup provider for the specified platform.
+   *
+   * OpenClaw providers delegate to the office-manager API.
+   * Hermes providers operate on the local filesystem.
+   */
+  backupProvider(platform: BackupPlatform = 'openclaw'): BackupProvider {
+    if (platform === 'hermes') {
+      return new HermesBackupProvider();
+    }
+    return new OpenClawBackupProvider(this.backups);
   }
 
   /**

@@ -29,10 +29,10 @@ export { CreditsAPI } from './api/credits.js';
 export { XMTPAPI } from './api/xmtp.js';
 export { IntegrationsAPI } from './api/integrations.js';
 export { ExtensionsAPI } from './api/extensions.js';
+export { BackupsAPI } from './api/backups.js';
 export {
   EventsAPI,
   CallbacksAPI,
-  BackupsAPI,
   EnvAPI,
   DelegatesAPI,
   MessagesAPI,
@@ -45,6 +45,11 @@ export {
   CapabilitiesAPI,
   ProxyAPI,
 } from './api/events.js';
+
+// ─── Backup Provider Framework ──────────────────────────────────────────────
+export type { BackupProvider } from './api/backup-provider.js';
+export { OpenClawBackupProvider } from './api/backup-openclaw.js';
+export { HermesBackupProvider } from './api/backup-hermes.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export type * from './types/index.js';

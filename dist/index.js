@@ -1,17 +1,24 @@
-export { OS1Client } from './client.js';
+// ─── Main Client ─────────────────────────────────────────────────────────────
+export { OS1AdminClient } from './client.js';
+// ─── Auth ────────────────────────────────────────────────────────────────────
+export { generateJWT, verifyJWT, authorizationHeader, signRequest, verifySignature, generateKeyPair, publicKeyFromPrivate, Keystore, } from './auth/index.js';
+// ─── Transport ───────────────────────────────────────────────────────────────
+export { Transport } from './transport.js';
+// ─── XMTP ────────────────────────────────────────────────────────────────────
+export { XMTPChannel } from './xmtp/channel.js';
+export { XMTPSession } from './xmtp/session.js';
+// ─── API Modules ─────────────────────────────────────────────────────────────
 export { OfficesAPI } from './api/offices.js';
-export { AgentsAPI } from './api/agents.js';
-export { IntegrationsAPI } from './api/integrations.js';
-export { EnvAPI } from './api/env.js';
+export { EmployeesAPI } from './api/employees.js';
 export { TasksAPI } from './api/tasks.js';
 export { FilesAPI } from './api/files.js';
-export { InvitesAPI } from './api/invites.js';
-export { ChatAPI } from './api/chat.js';
-export { CloneAPI } from './api/clone.js';
-export { JoinAPI } from './api/join.js';
-export { HeartbeatAPI } from './api/heartbeat.js';
-export { ColonyAPI } from './api/colony.js';
-export { MessageListener } from './api/messages.js';
-export { waitForCloneOnline } from './api/clone-status.js';
+export { CreditsAPI } from './api/credits.js';
+export { XMTPAPI } from './api/xmtp.js';
+export { IntegrationsAPI } from './api/integrations.js';
+export { ExtensionsAPI } from './api/extensions.js';
+export { BackupsAPI } from './api/backups.js';
+export { EventsAPI, CallbacksAPI, EnvAPI, DelegatesAPI, MessagesAPI, WorkspaceAPI, RolesAPI, TransferAPI, LLMPingAPI, WhatsAppAPI, ChromiumAPI, CapabilitiesAPI, ProxyAPI, } from './api/events.js';
+export { OpenClawBackupProvider } from './api/backup-openclaw.js';
+export { HermesBackupProvider } from './api/backup-hermes.js';
 export { OS1Error } from './types/index.js';
 //# sourceMappingURL=index.js.map

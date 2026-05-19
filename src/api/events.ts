@@ -1,6 +1,5 @@
 import type { Transport } from '../transport.js';
 import type {
-  Backup,
   PodCallback,
   PodEventRequest,
   EnvVar,
@@ -64,22 +63,8 @@ export class CallbacksAPI {
 }
 
 // ─── Backups ─────────────────────────────────────────────────────────────────
-
-export class BackupsAPI {
-  constructor(private transport: Transport) {}
-
-  async list(officeId: string, opts?: { employee?: string }): Promise<Backup[]> {
-    return this.transport.get<Backup[]>(`${base(officeId)}/backups`, opts);
-  }
-
-  async get(officeId: string, backupId: string): Promise<Backup> {
-    return this.transport.get<Backup>(`${base(officeId)}/backups/${backupId}`);
-  }
-
-  async delete(officeId: string, backupId: string): Promise<void> {
-    await this.transport.delete(`${base(officeId)}/backups/${backupId}`);
-  }
-}
+// Moved to src/api/backups.ts — re-export for backwards compatibility
+export { BackupsAPI } from './backups.js';
 
 // ─── Environment Variables ───────────────────────────────────────────────────
 

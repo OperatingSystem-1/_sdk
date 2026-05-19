@@ -5,9 +5,7 @@ export class OfficesAPI {
         this.transport = transport;
     }
     async create(req) {
-        // CLA-904: route create through the dashboard so virtual_offices row
-        // is written atomically. All read paths (list/get/status/etc.) stay on OM.
-        return this.transport.dashboardRequest('POST', '/api/offices', { body: req });
+        return this.transport.post(BASE, req);
     }
     async list() {
         return this.transport.get(BASE);

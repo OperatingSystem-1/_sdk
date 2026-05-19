@@ -468,7 +468,7 @@ export interface ExecResponse {
   exit_code: number;
 }
 
-// ─── Backups ─────────────────────────────────────────────────────────────────
+// ─── Backups (Legacy) ────────────────────────────────────────────────────────
 
 export interface Backup {
   id: string;
@@ -477,6 +477,180 @@ export interface Backup {
   s3_key: string;
   size_bytes: number;
   created_at: string;
+}
+
+// ─── Backup Provider Framework ──────────────────────────────────────────────
+
+export type BackupPlatform = 'openclaw' | 'hermes';
+export type BackupStorageBackend = 's3' | 'local';
+export type BackupTrigger = 'manual' | 'scheduled' | 'pre-delete';
+export type SnapshotStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial';
+
+/** A data surface that can be captured in a snapshot. */
+export type DataSurfaceKind =
+  | 'agent_workspace'   // /home/openclaw/.openclaw/
+  | 'agent_memory'      // ~/.memory/state.json + logs/*.md
+  | 'shared_db'         // Per-office shared PostgreSQL (tq_tasks, agent_messages, etc.)
+  | 'neon_db'           // Office-scoped rows from shared Neon (events, chat_messages, etc.)
+  | 'file_server'       // /data on per-office file-server PVC
+  | 'chat_sessions'     // Chat-server sessions + messages
+  | 'hermes_workspace'  // ~/.hermes/ (Hermes only)
+  | 'hermes_db';        // Hermes local PostgreSQL (Hermes only)
+
+/** One captured data surface within a snapshot. */
+export interface SnapshotSurface {
+  kind: DataSurfaceKind;
+  archivePath: string;
+  checksum: string;
+  sizeBytes: number;
+  compressedBytes: number;
+  fileCount?: number;
+  rowCount?: number;
+  tables?: string[];
+  status: SnapshotStatus;
+  error?: string;
+  durationMs: number;
+}
+
+/** Full snapshot manifest — the metadata document describing a point-in-time capture. */
+export interface BackupManifest {
+  id: string;
+  manifestVersion: string;
+  platform: BackupPlatform;
+  storageBackend: BackupStorageBackend;
+  officeId: string;
+  agentName?: string;
+  trigger: BackupTrigger;
+  status: SnapshotStatus;
+  parentSnapshotId?: string;
+  createdAt: string;
+  completedAt?: string;
+  durationMs?: number;
+  totalSizeBytes: number;
+  totalCompressedBytes: number;
+  surfaces: SnapshotSurface[];
+  storageLocation: string;
+  storagePath: string;
+  manifestPath: string;
+  label?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** Change type for a single item in a diff. */
+export type DiffChangeType = 'added' | 'modified' | 'deleted';
+
+/** A file-level change between two snapshots. */
+export interface FileDiffEntry {
+  path: string;
+  changeType: DiffChangeType;
+  sizeFrom: number;
+  sizeTo: number;
+  diff?: string;
+  checksumFrom?: string;
+  checksumTo?: string;
+}
+
+/** A database row-level change between two snapshots. */
+export interface DbDiffEntry {
+  table: string;
+  changeType: DiffChangeType;
+  primaryKey: Record<string, unknown>;
+  valuesFrom?: Record<string, unknown>;
+  valuesTo?: Record<string, unknown>;
+  changedColumns?: string[];
+}
+
+/** Summary statistics for a diff surface. */
+export interface DiffSurfaceSummary {
+  kind: DataSurfaceKind;
+  added: number;
+  modified: number;
+  deleted: number;
+}
+
+/** Full diff between two snapshots. */
+export interface BackupDiff {
+  fromSnapshotId: string;
+  toSnapshotId: string;
+  fromCreatedAt: string;
+  toCreatedAt: string;
+  surfaceSummaries: DiffSurfaceSummary[];
+  fileDiffs: FileDiffEntry[];
+  dbDiffs: DbDiffEntry[];
+  configDiffs: FileDiffEntry[];
+  truncated: boolean;
+  totalChanges: number;
+}
+
+/** Request to create a new snapshot. */
+export interface CreateSnapshotRequest {
+  agentName?: string;
+  surfaces?: DataSurfaceKind[];
+  label?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** Request to restore from a snapshot. */
+export interface RestoreFromSnapshotRequest {
+  snapshotId: string;
+  agentName?: string;
+  surfaces?: DataSurfaceKind[];
+  cleanRestore?: boolean;
+}
+
+/** Result of a restore operation. */
+export interface RestoreResult {
+  status: 'completed' | 'failed';
+  surfaceResults: Array<{
+    kind: DataSurfaceKind;
+    status: 'restored' | 'failed' | 'skipped';
+    error?: string;
+  }>;
+}
+
+/** Configuration for a backup schedule. */
+export interface BackupScheduleConfig {
+  cron: string;
+  surfaces?: DataSurfaceKind[];
+  retention: number;
+  enabled: boolean;
+  label?: string;
+}
+
+/** A configured backup schedule. */
+export interface BackupSchedule {
+  id: string;
+  officeId: string;
+  agentName?: string;
+  config: BackupScheduleConfig;
+  lastSnapshotId?: string;
+  lastRunAt?: string;
+  nextRunAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Request to diff two snapshots. */
+export interface DiffSnapshotsRequest {
+  fromSnapshotId: string;
+  toSnapshotId: string;
+  surfaces?: DataSurfaceKind[];
+  maxFileDiffs?: number;
+  maxDbDiffs?: number;
+}
+
+/** Backup health status for audit. */
+export interface BackupHealthStatus {
+  configured: boolean;
+  storageBackend?: BackupStorageBackend;
+  storageLocation?: string;
+  storageReachable?: boolean;
+  lastSnapshot?: BackupManifest;
+  schedules: BackupSchedule[];
+  hoursSinceLastBackup?: number;
+  scheduleOverdue: boolean;
+  totalSnapshots: number;
+  totalStorageBytes: number;
 }
 
 // ─── Transfer ────────────────────────────────────────────────────────────────

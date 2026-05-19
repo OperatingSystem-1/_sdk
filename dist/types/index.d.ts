@@ -7,25 +7,10 @@ export interface AgentAuthConfig {
     agentId: string;
     signingKey: Uint8Array;
 }
-export interface TokenAuthConfig {
-    type: 'token';
-    /** Opaque API key (e.g. mi_...) sent as `Authorization: Bearer <token>`. */
-    token: string;
-}
 export interface ClientConfig {
     endpoint: string;
     jwt?: JWTAuthConfig;
     agent?: AgentAuthConfig;
-    /** Token auth — used by `mi login`-issued API keys. */
-    auth?: TokenAuthConfig;
-    /**
-     * Dashboard endpoint override for create/hire dual-write (CLA-904).
-     * If unset, derived from `endpoint`:
-     *   m.mitosislabs.ai     → mitosislabs.ai
-     *   m.dev.mitosislabs.ai → dev.mitosislabs.ai
-     *   localhost:8080       → localhost:3000
-     */
-    dashboardEndpoint?: string;
     /** Request timeout in ms (default: 30000) */
     timeout?: number;
 }
@@ -56,28 +41,10 @@ export interface Office {
     owner_id: string;
     created_at: string;
     settings?: Record<string, unknown>;
-    /**
-     * Set on responses from `offices.create` when the dashboard returned the
-     * caller's pre-existing colony instead of creating a new one. The dashboard
-     * deduplicates per-user creates so onboarding can call POST /api/offices
-     * idempotently. When `existing: true`, the requested `name` was IGNORED —
-     * `name` and `id` reflect the colony you already own.
-     *
-     * Pass `forceCreate: true` to bypass the dedup and create a second colony.
-     */
-    existing?: boolean;
 }
 export interface CreateOfficeRequest {
     name: string;
-    owner_id?: string;
-    /**
-     * Bypass the per-user dedup guard. Without this flag, if you already own a
-     * non-archived colony the dashboard returns it (with `existing: true`) and
-     * ignores the requested `name`. With this flag, a new colony is always
-     * created. Mirrors the dashboard's office-selector UI which always sends
-     * `forceCreate: true` for the explicit "create new colony" button.
-     */
-    forceCreate?: boolean;
+    owner_id: string;
 }
 export interface OfficeSettings {
     [key: string]: unknown;
@@ -419,6 +386,154 @@ export interface Backup {
     s3_key: string;
     size_bytes: number;
     created_at: string;
+}
+export type BackupPlatform = 'openclaw' | 'hermes';
+export type BackupStorageBackend = 's3' | 'local';
+export type BackupTrigger = 'manual' | 'scheduled' | 'pre-delete';
+export type SnapshotStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial';
+/** A data surface that can be captured in a snapshot. */
+export type DataSurfaceKind = 'agent_workspace' | 'agent_memory' | 'shared_db' | 'neon_db' | 'file_server' | 'chat_sessions' | 'hermes_workspace' | 'hermes_db';
+/** One captured data surface within a snapshot. */
+export interface SnapshotSurface {
+    kind: DataSurfaceKind;
+    archivePath: string;
+    checksum: string;
+    sizeBytes: number;
+    compressedBytes: number;
+    fileCount?: number;
+    rowCount?: number;
+    tables?: string[];
+    status: SnapshotStatus;
+    error?: string;
+    durationMs: number;
+}
+/** Full snapshot manifest — the metadata document describing a point-in-time capture. */
+export interface BackupManifest {
+    id: string;
+    manifestVersion: string;
+    platform: BackupPlatform;
+    storageBackend: BackupStorageBackend;
+    officeId: string;
+    agentName?: string;
+    trigger: BackupTrigger;
+    status: SnapshotStatus;
+    parentSnapshotId?: string;
+    createdAt: string;
+    completedAt?: string;
+    durationMs?: number;
+    totalSizeBytes: number;
+    totalCompressedBytes: number;
+    surfaces: SnapshotSurface[];
+    storageLocation: string;
+    storagePath: string;
+    manifestPath: string;
+    label?: string;
+    metadata?: Record<string, unknown>;
+}
+/** Change type for a single item in a diff. */
+export type DiffChangeType = 'added' | 'modified' | 'deleted';
+/** A file-level change between two snapshots. */
+export interface FileDiffEntry {
+    path: string;
+    changeType: DiffChangeType;
+    sizeFrom: number;
+    sizeTo: number;
+    diff?: string;
+    checksumFrom?: string;
+    checksumTo?: string;
+}
+/** A database row-level change between two snapshots. */
+export interface DbDiffEntry {
+    table: string;
+    changeType: DiffChangeType;
+    primaryKey: Record<string, unknown>;
+    valuesFrom?: Record<string, unknown>;
+    valuesTo?: Record<string, unknown>;
+    changedColumns?: string[];
+}
+/** Summary statistics for a diff surface. */
+export interface DiffSurfaceSummary {
+    kind: DataSurfaceKind;
+    added: number;
+    modified: number;
+    deleted: number;
+}
+/** Full diff between two snapshots. */
+export interface BackupDiff {
+    fromSnapshotId: string;
+    toSnapshotId: string;
+    fromCreatedAt: string;
+    toCreatedAt: string;
+    surfaceSummaries: DiffSurfaceSummary[];
+    fileDiffs: FileDiffEntry[];
+    dbDiffs: DbDiffEntry[];
+    configDiffs: FileDiffEntry[];
+    truncated: boolean;
+    totalChanges: number;
+}
+/** Request to create a new snapshot. */
+export interface CreateSnapshotRequest {
+    agentName?: string;
+    surfaces?: DataSurfaceKind[];
+    label?: string;
+    metadata?: Record<string, unknown>;
+}
+/** Request to restore from a snapshot. */
+export interface RestoreFromSnapshotRequest {
+    snapshotId: string;
+    agentName?: string;
+    surfaces?: DataSurfaceKind[];
+    cleanRestore?: boolean;
+}
+/** Result of a restore operation. */
+export interface RestoreResult {
+    status: 'completed' | 'failed';
+    surfaceResults: Array<{
+        kind: DataSurfaceKind;
+        status: 'restored' | 'failed' | 'skipped';
+        error?: string;
+    }>;
+}
+/** Configuration for a backup schedule. */
+export interface BackupScheduleConfig {
+    cron: string;
+    surfaces?: DataSurfaceKind[];
+    retention: number;
+    enabled: boolean;
+    label?: string;
+}
+/** A configured backup schedule. */
+export interface BackupSchedule {
+    id: string;
+    officeId: string;
+    agentName?: string;
+    config: BackupScheduleConfig;
+    lastSnapshotId?: string;
+    lastRunAt?: string;
+    nextRunAt?: string;
+    createdAt: string;
+    updatedAt: string;
+}
+/** Request to diff two snapshots. */
+export interface DiffSnapshotsRequest {
+    fromSnapshotId: string;
+    toSnapshotId: string;
+    surfaces?: DataSurfaceKind[];
+    maxFileDiffs?: number;
+    maxDbDiffs?: number;
+}
+/** Backup health status for audit. */
+export interface BackupHealthStatus {
+    configured: boolean;
+    storageBackend?: BackupStorageBackend;
+    storageLocation?: string;
+    storageReachable?: boolean;
+    lastSnapshot?: BackupManifest;
+    schedules: BackupSchedule[];
+    hoursSinceLastBackup?: number;
+    scheduleOverdue: boolean;
+    totalSnapshots: number;
+    totalStorageBytes: number;
 }
 export interface TransferStatus {
     transfer_id: string;
