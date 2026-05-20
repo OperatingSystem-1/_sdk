@@ -47,8 +47,8 @@ export class BackupsAPI {
   // ─── Snapshots (Next.js dashboard API — user-scoped) ───────────────────
 
   /** Create a point-in-time snapshot across all data surfaces. */
-  async createSnapshot(_officeId: string, req: CreateSnapshotRequest): Promise<BackupManifest> {
-    return this.transport.post<BackupManifest>('/api/snapshots', req);
+  async createSnapshot(officeId: string, req: CreateSnapshotRequest): Promise<BackupManifest> {
+    return this.transport.post<BackupManifest>('/api/snapshots', { officeId, ...req });
   }
 
   /** List snapshots, optionally filtered. */
@@ -78,8 +78,8 @@ export class BackupsAPI {
   // ─── Restore ────────────────────────────────────────────────────────────
 
   /** Restore from a snapshot. */
-  async restore(_officeId: string, req: RestoreFromSnapshotRequest): Promise<RestoreResult> {
-    return this.transport.post<RestoreResult>('/api/snapshots/restore', req);
+  async restore(officeId: string, req: RestoreFromSnapshotRequest): Promise<RestoreResult> {
+    return this.transport.post<RestoreResult>('/api/snapshots/restore', { officeId, ...req });
   }
 
   // ─── Diff ───────────────────────────────────────────────────────────────

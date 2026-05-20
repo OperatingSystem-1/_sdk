@@ -87,10 +87,10 @@ describe('BackupsAPI', () => {
       manifestPath: 'snapshots/office-1/snap-1/manifest.json',
     };
 
-    it('createSnapshot() posts to /api/snapshots', async () => {
+    it('createSnapshot() posts to /api/snapshots with officeId', async () => {
       (transport.post as any).mockResolvedValue(manifest);
       const result = await api.createSnapshot('office-1', { label: 'test' });
-      expect(transport.post).toHaveBeenCalledWith('/api/snapshots', { label: 'test' });
+      expect(transport.post).toHaveBeenCalledWith('/api/snapshots', { officeId: 'office-1', label: 'test' });
       expect(result.id).toBe('snap-1');
     });
 
@@ -114,14 +114,14 @@ describe('BackupsAPI', () => {
       expect(transport.delete).toHaveBeenCalledWith('/api/snapshots/snap-1');
     });
 
-    it('restore() posts to /api/snapshots/restore', async () => {
+    it('restore() posts to /api/snapshots/restore with officeId', async () => {
       const restoreResult: RestoreResult = {
         status: 'completed',
         surfaceResults: [{ kind: 'agent_workspace', status: 'restored' }],
       };
       (transport.post as any).mockResolvedValue(restoreResult);
       const result = await api.restore('office-1', { snapshotId: 'snap-1' });
-      expect(transport.post).toHaveBeenCalledWith('/api/snapshots/restore', { snapshotId: 'snap-1' });
+      expect(transport.post).toHaveBeenCalledWith('/api/snapshots/restore', { officeId: 'office-1', snapshotId: 'snap-1' });
       expect(result.status).toBe('completed');
     });
 
