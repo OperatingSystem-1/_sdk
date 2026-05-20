@@ -21,6 +21,11 @@ export class Transport {
    * Build auth headers based on configuration.
    */
   private async authHeaders(method: string, path: string, asAgent?: boolean): Promise<Record<string, string>> {
+    // Plain Bearer token (API key from mi login) — simplest auth
+    if (this.config.token && !asAgent) {
+      return { Authorization: `Bearer ${this.config.token}` };
+    }
+
     // Agent auth takes priority when explicitly requested or when only agent auth is configured
     if ((asAgent || !this.config.jwt) && this.config.agent) {
       const signed = await signRequest(
@@ -38,7 +43,11 @@ export class Transport {
       };
     }
 
-    throw new Error('No authentication configured. Provide jwt or agent auth config.');
+    if (this.config.token) {
+      return { Authorization: `Bearer ${this.config.token}` };
+    }
+
+    throw new Error('No authentication configured. Run `mi login` or provide jwt/agent auth config.');
   }
 
   /**

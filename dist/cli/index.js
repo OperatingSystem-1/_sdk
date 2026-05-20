@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { registerAuditCommand } from './audit.js';
 import { registerBackupCommand } from './backup.js';
+import { registerLoginCommand } from './login.js';
 const program = new Command();
 program
     .name('os1-admin')
@@ -429,6 +430,8 @@ program
     const result = await client.transport.request(method.toUpperCase(), path, { body });
     json(result);
 });
+// ─── login ──────────────────────────────────────────────────────────────────
+registerLoginCommand(program);
 // ─── audit ───────────────────────────────────────────────────────────────────
 registerAuditCommand(program, getClient);
 // ─── backup ─────────────────────────────────────────────────────────────────

@@ -11,6 +11,8 @@ export interface ClientConfig {
     endpoint: string;
     jwt?: JWTAuthConfig;
     agent?: AgentAuthConfig;
+    /** Bearer token (API key from mi login). Simplest auth — no signing. */
+    token?: string;
     /** Request timeout in ms (default: 30000) */
     timeout?: number;
 }

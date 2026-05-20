@@ -113,15 +113,25 @@ export class OS1AdminClient {
 
   /**
    * Create a client from stored configuration.
-   * Reads endpoint and JWT secret from ~/.os1/config.json and ~/.os1/keys/jwt.key
+   * Tries API key first (from mi login), then JWT secret (from mi init).
    */
   static async fromConfig(): Promise<OS1AdminClient> {
     const keystore = new Keystore();
     const config = await keystore.loadConfig();
+
+    const endpoint = (config.endpoint as string) ?? 'https://mitosislabs.ai';
+
+    // Prefer API key (set by mi login)
+    const apiKey = config.apiKey as string | undefined;
+    if (apiKey) {
+      return new OS1AdminClient({
+        endpoint,
+        token: apiKey,
+      });
+    }
+
+    // Fall back to JWT secret (set by mi init)
     const jwtSecret = await keystore.loadJWTSecret();
-
-    const endpoint = (config.endpoint as string) ?? 'https://m.mitosislabs.ai';
-
     return new OS1AdminClient({
       endpoint,
       jwt: { jwtSecret },

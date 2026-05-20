@@ -17,6 +17,10 @@ export class Transport {
      * Build auth headers based on configuration.
      */
     async authHeaders(method, path, asAgent) {
+        // Plain Bearer token (API key from mi login) — simplest auth
+        if (this.config.token && !asAgent) {
+            return { Authorization: `Bearer ${this.config.token}` };
+        }
         // Agent auth takes priority when explicitly requested or when only agent auth is configured
         if ((asAgent || !this.config.jwt) && this.config.agent) {
             const signed = await signRequest(this.config.agent.agentId, method, path, this.config.agent.signingKey);
@@ -27,7 +31,10 @@ export class Transport {
                 Authorization: authorizationHeader(this.config.jwt.jwtSecret, this.config.jwt.userId ?? 'admin-sdk'),
             };
         }
-        throw new Error('No authentication configured. Provide jwt or agent auth config.');
+        if (this.config.token) {
+            return { Authorization: `Bearer ${this.config.token}` };
+        }
+        throw new Error('No authentication configured. Run `mi login` or provide jwt/agent auth config.');
     }
     /**
      * Make an authenticated request to the office-manager API.
