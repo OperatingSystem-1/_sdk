@@ -35,6 +35,23 @@ function isRemote(): boolean {
   );
 }
 
+function errorPage(message: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Error — Mitosis</title></head>
+<body style="margin:0;min-height:100vh;background:#08080c;background-image:radial-gradient(circle,rgba(255,255,255,0.08) 1.2px,transparent 1.2px);background-size:40px 40px;display:flex;align-items:center;justify-content:center;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;-webkit-font-smoothing:antialiased">
+<div style="text-align:center;color:#e8e4e0;max-width:400px;padding:48px 24px">
+<div style="width:48px;height:48px;border-radius:50%;background:rgba(239,68,68,0.15);display:flex;align-items:center;justify-content:center;margin:0 auto 24px">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+</div>
+<h1 style="font-size:28px;font-weight:700;margin:0 0 12px;letter-spacing:-0.03em">Something went wrong.</h1>
+<p style="color:#888;font-size:14px;font-weight:300;line-height:1.6;margin:0">${message}</p>
+<p style="color:#555;font-size:11px;margin-top:32px;letter-spacing:0.02em">mitosis</p>
+</div>
+</body>
+</html>`;
+}
+
 /**
  * Start a temporary HTTP server and wait for the OAuth callback.
  */
@@ -60,7 +77,7 @@ function waitForCallback(port: number, timeoutMs: number): Promise<{ key: string
 
       if (error) {
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end('<html><body style="font-family:system-ui;text-align:center;padding:60px"><h2>Login failed</h2><p>You can close this tab.</p></body></html>');
+        res.end(errorPage('Login failed. Please try again from your terminal.'));
         clearTimeout(timeout);
         server.close();
         reject(new Error(`Login failed: ${error}`));
@@ -69,7 +86,7 @@ function waitForCallback(port: number, timeoutMs: number): Promise<{ key: string
 
       if (!key) {
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end('<html><body style="font-family:system-ui;text-align:center;padding:60px"><h2>Login failed</h2><p>No API key received. You can close this tab.</p></body></html>');
+        res.end(errorPage('No API key received. Please try again.'));
         clearTimeout(timeout);
         server.close();
         reject(new Error('No API key received'));
@@ -77,7 +94,21 @@ function waitForCallback(port: number, timeoutMs: number): Promise<{ key: string
       }
 
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end('<html><body style="font-family:system-ui;text-align:center;padding:60px;color:#333"><h2>Logged in!</h2><p>You can close this tab and return to your terminal.</p></body></html>');
+      res.end(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Logged in — Mitosis</title></head>
+<body style="margin:0;min-height:100vh;background:#08080c;background-image:radial-gradient(circle,rgba(255,255,255,0.08) 1.2px,transparent 1.2px);background-size:40px 40px;display:flex;align-items:center;justify-content:center;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;-webkit-font-smoothing:antialiased">
+<div style="text-align:center;color:#e8e4e0;max-width:400px;padding:48px 24px">
+<div style="width:48px;height:48px;border-radius:50%;background:rgba(34,197,94,0.15);display:flex;align-items:center;justify-content:center;margin:0 auto 24px">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+</div>
+<h1 style="font-size:28px;font-weight:700;margin:0 0 12px;letter-spacing:-0.03em">You're in.</h1>
+<p style="color:#888;font-size:14px;font-weight:300;line-height:1.6;margin:0 0 32px">Your CLI is authenticated. You can close this tab and return to your terminal.</p>
+<code style="display:inline-block;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 16px;font-size:13px;color:#e8e4e0">mi backup create</code>
+<p style="color:#555;font-size:11px;margin-top:32px;letter-spacing:0.02em">mitosis</p>
+</div>
+</body>
+</html>`);
       clearTimeout(timeout);
       server.close();
       resolve({ key, email });
