@@ -103,6 +103,7 @@ function waitForCallback(port: number, timeoutMs: number): Promise<{ key: string
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
 </div>
 <h1 style="font-size:28px;font-weight:700;margin:0 0 12px;letter-spacing:-0.03em">You're in.</h1>
+${email ? `<p style="color:#e8e4e0;font-size:15px;font-weight:400;margin:0 0 8px">${email}</p>` : ''}
 <p style="color:#888;font-size:14px;font-weight:300;line-height:1.6;margin:0 0 32px">Your CLI is authenticated. You can close this tab and return to your terminal.</p>
 <code style="display:inline-block;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 16px;font-size:13px;color:#e8e4e0">mi backup create</code>
 <p style="color:#555;font-size:11px;margin-top:32px;letter-spacing:0.02em">mitosis</p>
