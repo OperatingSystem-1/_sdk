@@ -9,6 +9,7 @@ import { createInterface } from 'node:readline';
 import { registerAuditCommand } from './audit.js';
 import { registerBackupCommand } from './backup.js';
 import { registerLoginCommand } from './login.js';
+import { registerStatusCommand } from './status.js';
 
 const program = new Command();
 
@@ -494,6 +495,10 @@ program
 // ─── login ──────────────────────────────────────────────────────────────────
 
 registerLoginCommand(program);
+
+// ─── status ─────────────────────────────────────────────────────────────────
+
+registerStatusCommand(program);
 
 // ─── audit ───────────────────────────────────────────────────────────────────
 
