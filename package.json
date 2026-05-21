@@ -1,25 +1,24 @@
 {
   "name": "@mitosislabs/sdk",
-  "version": "0.7.8",
-  "description": "Mitosis — persistent AI agents that remember, replicate, and coordinate",
+  "version": "0.2.9",
+  "description": "Mitosis One — persistent AI agents that remember, replicate, and coordinate",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "mi": "dist/cli/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/cli/index.js",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "prepublishOnly": "echo 'dist pre-built — skipping tsc'"
+    "prepublishOnly": "npm run clean && npm run build"
   },
   "files": [
     "dist",
-    "README.md",
-    "llms-full.txt"
+    "README.md"
   ],
   "keywords": [
     "os1",
@@ -34,14 +33,12 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@noble/secp256k1": "^2.3.0",
     "@xmtp/node-sdk": "^4.4.0",
     "commander": "^12.1.0",
     "ethereum-cryptography": "^3.2.0",
     "viem": "^2.47.10"
   },
   "devDependencies": {
-    "@mitosislabs/sdk": "^0.7.7",
     "@types/node": "^20.14.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"

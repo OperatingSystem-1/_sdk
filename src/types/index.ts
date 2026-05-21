@@ -1,51 +1,40 @@
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
-export interface JWTAuthConfig {
-  jwtSecret: string;
-  /** User ID to embed in JWT tokens (required for owner-scoped endpoints) */
+export interface ClientConfig {
+  /** OS-1 API endpoint */
+  endpoint: string;
+  /** Authentication configuration */
+  auth: AuthConfig;
+  /** Request timeout in ms (default: 30000) */
+  timeout?: number;
+  /**
+   * External agent API key — when set, sent as X-Agent-Api-Key header
+   * instead of normal auth. Set this for agents that joined via `mi join`
+   * (the raw key returned by the join endpoint).
+   * @deprecated Use signingKey + agentId for pubkey auth instead.
+   */
+  agentKey?: string;
+  /** secp256k1 private key hex — signs every request with ECDSA */
+  signingKey?: string;
+  /** Agent name — sent as X-Agent-Id header with signed requests */
+  agentId?: string;
+  /** Current office id for office-scoped APIs and bridge-backed office group chat */
+  officeId?: string;
+  /** Office XMTP group conversation ID for public network chat */
+  xmtpGroupId?: string;
+}
+
+export type AuthConfig = ApiKeyAuth | TokenAuth;
+
+export interface ApiKeyAuth {
+  type: 'apiKey';
+  key: string;
   userId?: string;
 }
 
-export interface AgentAuthConfig {
-  agentId: string;
-  signingKey: Uint8Array; // secp256k1 private key (32 bytes)
-}
-
-export interface ClientConfig {
-  endpoint: string;
-  jwt?: JWTAuthConfig;
-  agent?: AgentAuthConfig;
-  /** Bearer token (API key from mi login). Simplest auth — no signing. */
-  token?: string;
-  /** Request timeout in ms (default: 30000) */
-  timeout?: number;
-}
-
-export interface SignedHeaders {
-  'X-Agent-Id': string;
-  'X-Timestamp': string;
-  'X-Signature': string;
-}
-
-export interface JWTPayload {
-  botId: string;
-  instanceId?: string;
-  privateIp?: string;
-  userId: string;
-  role?: string;
-  iat: number;
-  exp: number;
-}
-
-// ─── Keystore ────────────────────────────────────────────────────────────────
-
-export interface KeyPair {
-  publicKey: string;   // hex-encoded uncompressed point (04...)
-  privateKey: Uint8Array; // 32-byte raw scalar
-}
-
-export interface KeystoreConfig {
-  basePath?: string; // default: ~/.os1/keys
+export interface TokenAuth {
+  type: 'token';
+  token: string;
 }
 
 // ─── Office ──────────────────────────────────────────────────────────────────
@@ -60,143 +49,56 @@ export interface Office {
 
 export interface CreateOfficeRequest {
   name: string;
-  owner_id: string;
 }
 
 export interface OfficeSettings {
   [key: string]: unknown;
 }
 
-/** Matches office-manager internal/k8s/infrastructure.go ClusterStatus */
 export interface ClusterStatus {
-  phase: 'ready' | 'degraded' | 'failed' | 'provisioning';
-  operator: ComponentStatus;
-  ingress: ComponentStatus;
-  ingressEndpoint?: string;
-  message?: string;
-}
-
-export interface ComponentStatus {
-  ready: boolean;
-  message?: string;
-}
-
-// ─── Employee (Agent) ────────────────────────────────────────────────────────
-// Matches office-manager internal/models/employee.go
-
-export interface Employee {
-  name: string;
-  role?: string;
-  modelTier: string;
-  modelProvider: string;
-  skills?: string[];
-  channels?: EmployeeChannels;
-  resources?: EmployeeResources;
-  storage?: string;
-  selfConfigure?: boolean;
-  autoUpdate?: boolean;
-  chromium?: boolean;
-  webTerminal?: boolean;
-  backup?: BackupConfig;
-  imageTag?: string;
-  customConfig?: Record<string, unknown>;
-  env?: Record<string, string>;
-  envSecrets?: string[];
-  systemPrompt?: string;
-  status: EmployeeStatus;
-}
-
-export interface EmployeeChannels {
-  whatsapp?: boolean;
-  discord?: boolean;
-  telegram?: boolean;
-  signal?: boolean;
-  xmtp?: boolean;
-}
-
-export interface EmployeeResources {
-  cpuRequest?: string;
-  cpuLimit?: string;
-  memoryRequest?: string;
-  memoryLimit?: string;
-}
-
-export interface BackupConfig {
-  schedule?: string;
-  enabled?: boolean;
-}
-
-export interface EmployeeStatus {
   phase: string;
-  ready: boolean;
-  gatewayEndpoint?: string;
-  accessUrl?: string;
-  accessToken?: string;
-  lastSeen?: string;
   message?: string;
 }
 
-export interface AgentKitOwner {
-  name?: string;
-  phone?: string;
-  email?: string;
-  context?: string;
+// ─── Agent ───────────────────────────────────────────────────────────────────
+
+export interface Agent {
+  name: string;
+  role?: string;
+  modelTier?: string;
+  modelProvider?: string;
+  skills?: string[];
+  status?: AgentStatus;
 }
 
-export interface AgentKitConfig {
-  enabled?: boolean;
-  taskQueue?: boolean;
-  disableTaskQueue?: boolean;
-  neonSecret?: string;
-  owner?: AgentKitOwner;
-  personality?: string;
+export interface AgentStatus {
+  phase?: string;
+  ready?: boolean;
+  message?: string;
 }
 
-export interface HireRequest {
+export interface HireAgentRequest {
   name: string;
   role?: string;
   modelTier?: string;
   skills?: string[];
-  channels?: EmployeeChannels;
-  resources?: EmployeeResources;
-  storage?: string;
-  selfConfigure?: boolean;
-  autoUpdate?: boolean;
-  chromium?: boolean;
-  webTerminal?: boolean;
-  imageTag?: string;
-  systemPrompt?: string;
   env?: Record<string, string>;
-  envSecrets?: string[];
-  customConfig?: Record<string, unknown>;
-  agentKit?: AgentKitConfig;
-  botId?: string;
-  bedrockCredentials?: { accessKeyId: string; secretAccessKey: string; region: string };
-  restoreFromBackup?: string;
+  systemPrompt?: string;
+  chromium?: boolean;
+  provider?: string;
+  integrations?: Record<string, boolean>;
 }
 
-export interface UpdateEmployeeRequest {
+export interface UpdateAgentRequest {
   role?: string;
   modelTier?: string;
   skills?: string[];
-  channels?: EmployeeChannels;
-  resources?: EmployeeResources;
-  storage?: string;
-  selfConfigure?: boolean;
-  autoUpdate?: boolean;
-  chromium?: boolean;
-  webTerminal?: boolean;
-  imageTag?: string;
-  systemPrompt?: string;
   env?: Record<string, string>;
-  envSecrets?: string[];
-  customConfig?: Record<string, unknown>;
 }
 
 export interface PromoteRequest {
   modelTier: string;
   provider?: string;
-  resources?: EmployeeResources;
 }
 
 export interface SkillsRequest {
@@ -204,145 +106,16 @@ export interface SkillsRequest {
   remove?: string[];
 }
 
-export interface EmployeeAction {
-  action: string;
-  params?: Record<string, unknown>;
-}
-
-export interface EmployeeLogs {
+export interface AgentLogs {
   logs: string;
   pod: string;
 }
 
-// ─── Task ────────────────────────────────────────────────────────────────────
-
-export interface Task {
-  id: string;
-  office_id: string;
-  title: string;
-  description?: string;
-  kind?: string;
-  priority?: number;
-  status: string;
-  assigned_to?: string;
-  created_at: string;
-  completed_at?: string;
-}
-
-export interface CreateTaskRequest {
-  title: string;
-  description?: string;
-  kind?: string;
-  priority?: number;
-  assigned_to?: string;
-}
-
-export interface TaskStats {
-  total: number;
-  queued: number;
-  running: number;
-  completed: number;
-  failed: number;
-}
-
-// ─── File ────────────────────────────────────────────────────────────────────
-
-export interface FileInfo {
-  name: string;
-  size: number;
-  modifiedAt: string;
-}
-
-export interface FileChange {
-  type: 'upload' | 'delete';
-  name: string;
-  timestamp: number;
-}
-
-export interface FileChangesResponse {
-  events: FileChange[];
-  serverTime: number;
-  full_refresh?: boolean;
-}
-
-export interface FilePermission {
-  agent_name: string;
-  access: 'none' | 'read' | 'write';
-}
-
-// ─── Credits & Usage ─────────────────────────────────────────────────────────
-
-export interface CreditBalance {
-  office_id: string;
-  balance: number;
-}
-
-export interface AddCreditsRequest {
-  amount: number;
-  reason: string;
-}
-
-export interface CreditHistoryEntry {
-  id: string;
-  office_id: string;
-  amount: number;
-  balance_after: number;
-  reason: string;
-  created_at: string;
-}
-
-export interface UsageSummary {
-  cpu_core_hours: number;
-  memory_gib_hours: number;
-  total_credits: number;
-  pods: Record<string, unknown>[];
-}
-
-export interface LLMUsageSummary {
-  total_tokens: number;
-  total_cost: number;
-  total_credits: number;
-  agents: Record<string, unknown>[];
-}
-
-// ─── XMTP ────────────────────────────────────────────────────────────────────
-
-export interface XMTPConversation {
-  id: string;
-  peer: string;
-  last_message?: string;
-  last_message_at?: string;
-}
-
-export interface XMTPGroup {
-  id: string;
-  name?: string;
-  members: string[];
-  created_at: string;
-}
-
-export interface XMTPMessage {
-  id: string;
-  from_agent: string;
-  content: string;
-  created_at: string;
-}
-
-export interface SendXMTPMessageRequest {
-  agent_id: string;
-  content: string;
-}
-
-export interface CreateGroupRequest {
-  name?: string;
-  members: string[];
-}
-
-// ─── Events & Activity ───────────────────────────────────────────────────────
+// ─── Activity ────────────────────────────────────────────────────────────────
 
 export interface ActivityEvent {
   id: string;
-  category: 'task' | 'message' | 'standup' | 'session' | 'xmtp' | 'lifecycle' | 'chat' | 'terminal';
+  category: string;
   type: string;
   summary: string;
   timestamp: string;
@@ -354,12 +127,6 @@ export interface ActivityQuery {
   offset?: number;
   category?: string;
   since?: string;
-}
-
-export interface ChatSession {
-  session_key: string;
-  started_at: string;
-  messages: number;
 }
 
 // ─── Integrations ────────────────────────────────────────────────────────────
@@ -377,378 +144,424 @@ export interface IntegrationSecret {
   updated_at?: string;
 }
 
-export interface SetSecretRequest {
-  provider: string;
-  key: string;
-}
-
-// ─── Extensions ──────────────────────────────────────────────────────────────
-
-export interface Extension {
+export interface OfficeIntegration {
   id: string;
   name: string;
-  office_id: string;
-  manifest?: Record<string, unknown>;
-  created_at: string;
-}
-
-export interface CreateExtensionRequest {
-  name: string;
-  manifest?: Record<string, unknown>;
-  panel_html?: string;
-}
-
-// ─── Marketplace ─────────────────────────────────────────────────────────────
-
-export interface MarketplaceItem {
-  id: string;
-  name: string;
-  description?: string;
-  author?: string;
-  installs: number;
-}
-
-// ─── WhatsApp ────────────────────────────────────────────────────────────────
-
-export interface WhatsAppStatus {
-  connected: boolean;
-  phone_number?: string;
-  agent_id?: string;
-}
-
-export interface WhatsAppQRStatus {
-  status: string;
-  qr?: string;
-}
-
-export interface WhatsAppAgentStatus {
-  agents: Array<{ name: string; whatsapp_enabled: boolean }>;
-}
-
-// ─── Chromium ────────────────────────────────────────────────────────────────
-
-export interface ChromiumInstance {
-  id: string;
-  status: string;
-  vnc_url?: string;
-}
-
-// ─── Delegates ───────────────────────────────────────────────────────────────
-
-export interface Delegate {
-  agent_id: string;
-  permissions: string[];
-  created_at: string;
-}
-
-export interface CreateDelegateRequest {
-  permissions: string[];
-}
-
-// ─── Messages ────────────────────────────────────────────────────────────────
-
-export interface SendMessageRequest {
-  to: string;
-  content: string;
-}
-
-export interface PoolStats {
-  active: number;
-  idle: number;
-}
-
-// ─── Workspace ───────────────────────────────────────────────────────────────
-
-export interface ExecRequest {
-  command: string;
-  timeout_ms?: number;
-}
-
-export interface ExecResponse {
-  stdout: string;
-  stderr: string;
-  exit_code: number;
-}
-
-// ─── Backups (Legacy) ────────────────────────────────────────────────────────
-
-export interface Backup {
-  id: string;
-  employee_name: string;
-  office_id: string;
-  s3_key: string;
-  size_bytes: number;
-  created_at: string;
-}
-
-// ─── Backup Provider Framework ──────────────────────────────────────────────
-
-export type BackupPlatform = 'openclaw' | 'hermes';
-export type BackupStorageBackend = 's3' | 'local';
-export type BackupTrigger = 'manual' | 'scheduled' | 'pre-delete';
-export type SnapshotStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial';
-
-/** A data surface that can be captured in a snapshot. */
-export type DataSurfaceKind =
-  | 'agent_workspace'   // /home/openclaw/.openclaw/
-  | 'agent_memory'      // ~/.memory/state.json + logs/*.md
-  | 'shared_db'         // Per-office shared PostgreSQL (tq_tasks, agent_messages, etc.)
-  | 'neon_db'           // Office-scoped rows from shared Neon (events, chat_messages, etc.)
-  | 'file_server'       // /data on per-office file-server PVC
-  | 'chat_sessions'     // Chat-server sessions + messages
-  | 'hermes_workspace'  // ~/.hermes/ (Hermes only)
-  | 'hermes_db';        // Hermes local PostgreSQL (Hermes only)
-
-/** One captured data surface within a snapshot. */
-export interface SnapshotSurface {
-  kind: DataSurfaceKind;
-  archivePath: string;
-  checksum: string;
-  sizeBytes: number;
-  compressedBytes: number;
-  fileCount?: number;
-  rowCount?: number;
-  tables?: string[];
-  status: SnapshotStatus;
-  error?: string;
-  durationMs: number;
-}
-
-/** Full snapshot manifest — the metadata document describing a point-in-time capture. */
-export interface BackupManifest {
-  id: string;
-  manifestVersion: string;
-  platform: BackupPlatform;
-  storageBackend: BackupStorageBackend;
-  officeId: string;
-  agentName?: string;
-  trigger: BackupTrigger;
-  status: SnapshotStatus;
-  parentSnapshotId?: string;
-  createdAt: string;
-  completedAt?: string;
-  durationMs?: number;
-  totalSizeBytes: number;
-  totalCompressedBytes: number;
-  surfaces: SnapshotSurface[];
-  storageLocation: string;
-  storagePath: string;
-  manifestPath: string;
-  label?: string;
-  metadata?: Record<string, unknown>;
-}
-
-/** Change type for a single item in a diff. */
-export type DiffChangeType = 'added' | 'modified' | 'deleted';
-
-/** A file-level change between two snapshots. */
-export interface FileDiffEntry {
-  path: string;
-  changeType: DiffChangeType;
-  sizeFrom: number;
-  sizeTo: number;
-  diff?: string;
-  checksumFrom?: string;
-  checksumTo?: string;
-}
-
-/** A database row-level change between two snapshots. */
-export interface DbDiffEntry {
-  table: string;
-  changeType: DiffChangeType;
-  primaryKey: Record<string, unknown>;
-  valuesFrom?: Record<string, unknown>;
-  valuesTo?: Record<string, unknown>;
-  changedColumns?: string[];
-}
-
-/** Summary statistics for a diff surface. */
-export interface DiffSurfaceSummary {
-  kind: DataSurfaceKind;
-  added: number;
-  modified: number;
-  deleted: number;
-}
-
-/** Full diff between two snapshots. */
-export interface BackupDiff {
-  fromSnapshotId: string;
-  toSnapshotId: string;
-  fromCreatedAt: string;
-  toCreatedAt: string;
-  surfaceSummaries: DiffSurfaceSummary[];
-  fileDiffs: FileDiffEntry[];
-  dbDiffs: DbDiffEntry[];
-  configDiffs: FileDiffEntry[];
-  truncated: boolean;
-  totalChanges: number;
-}
-
-/** Request to create a new snapshot. */
-export interface CreateSnapshotRequest {
-  agentName?: string;
-  surfaces?: DataSurfaceKind[];
-  label?: string;
-  metadata?: Record<string, unknown>;
-}
-
-/** Request to restore from a snapshot. */
-export interface RestoreFromSnapshotRequest {
-  snapshotId: string;
-  agentName?: string;
-  surfaces?: DataSurfaceKind[];
-  cleanRestore?: boolean;
-}
-
-/** Result of a restore operation. */
-export interface RestoreResult {
-  status: 'completed' | 'failed';
-  surfaceResults: Array<{
-    kind: DataSurfaceKind;
-    status: 'restored' | 'failed' | 'skipped';
-    error?: string;
+  description: string;
+  icon: string;
+  category: 'llm' | 'communication' | 'services';
+  aliases: string[];
+  capabilities: string[];
+  wizard: 'interactive' | 'guide' | 'auto' | 'oauth';
+  guideFile: string | null;
+  officeLevel: boolean;
+  channels: string[];
+  agentEnvVars: string[];
+  requiredSecrets: Array<{
+    key: string;
+    label: string;
+    type: 'text' | 'password' | 'oauth';
+    required: boolean;
+    hint?: string;
   }>;
+  verified: boolean;
+  status: 'pending' | 'configured' | 'active';
+  secretName: string | null;
+  metadata: Record<string, unknown>;
 }
 
-/** Configuration for a backup schedule. */
-export interface BackupScheduleConfig {
-  cron: string;
-  surfaces?: DataSurfaceKind[];
-  retention: number;
+/** Per-agent integration state returned by the polling endpoint (CLA-519). */
+export interface AgentIntegration {
+  id: string;
   enabled: boolean;
-  label?: string;
-}
-
-/** A configured backup schedule. */
-export interface BackupSchedule {
-  id: string;
-  officeId: string;
-  agentName?: string;
-  config: BackupScheduleConfig;
-  lastSnapshotId?: string;
-  lastRunAt?: string;
-  nextRunAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Request to diff two snapshots. */
-export interface DiffSnapshotsRequest {
-  fromSnapshotId: string;
-  toSnapshotId: string;
-  surfaces?: DataSurfaceKind[];
-  maxFileDiffs?: number;
-  maxDbDiffs?: number;
-}
-
-/** Backup health status for audit. */
-export interface BackupHealthStatus {
-  configured: boolean;
-  storageBackend?: BackupStorageBackend;
-  storageLocation?: string;
-  storageReachable?: boolean;
-  lastSnapshot?: BackupManifest;
-  schedules: BackupSchedule[];
-  hoursSinceLastBackup?: number;
-  scheduleOverdue: boolean;
-  totalSnapshots: number;
-  totalStorageBytes: number;
-}
-
-// ─── Transfer ────────────────────────────────────────────────────────────────
-
-export interface TransferStatus {
-  transfer_id: string;
-  status: string;
-  progress?: number;
-}
-
-// ─── Roles ───────────────────────────────────────────────────────────────────
-
-export interface Role {
-  name: string;
-  permissions: string[];
-}
-
-// ─── Quota ───────────────────────────────────────────────────────────────────
-
-export interface Quota {
-  cpu: string;
-  memory: string;
-  pods: number;
-  tier: string;
-}
-
-export interface SetQuotaRequest {
-  tier: string;
-  cpu?: string;
-  memory?: string;
-  pods?: number;
-}
-
-// ─── LLM Ping ────────────────────────────────────────────────────────────────
-
-export interface PingResult {
-  model: string;
-  latency_ms: number;
-  success: boolean;
+  status: 'pending' | 'loading' | 'active' | 'error' | 'offline';
   error?: string;
+  secretName?: string;
+  channels: string[];
+  envVars: string[];
+  rev: number;
+  toggledAt: string;
 }
 
-// ─── Callbacks ───────────────────────────────────────────────────────────────
-
-export interface PodCallback {
-  id: string;
-  type: string;
-  payload: Record<string, unknown>;
-  created_at: string;
+export interface AgentIntegrationsResponse {
+  integrations: AgentIntegration[];
+  rev: number;
 }
 
-export interface PodEventRequest {
-  type: string;
-  payload?: Record<string, unknown>;
+export interface IntegrationCredentialEntry {
+  enabled: boolean;
+  env?: Record<string, string>;
 }
 
-// ─── Env ─────────────────────────────────────────────────────────────────────
+export interface IntegrationCredentials {
+  integrations: Record<string, IntegrationCredentialEntry>;
+}
+
+// ─── Environment Variables ──────────────────────────────────────────────────
 
 export interface EnvVar {
   key: string;
   value?: string;
-  source?: string;
+  scope?: 'office' | 'agent';
+  agentName?: string;
 }
 
-export interface SetEnvRequest {
-  key: string;
-  value: string;
+// ─── Tasks ──────────────────────────────────────────────────────────────────
+
+export type TaskStatus = 'queued' | 'claimed' | 'running' | 'blocked' | 'done' | 'failed' | 'cancelled';
+export type TaskKind = 'general' | 'code' | 'research' | 'browser' | 'review' | 'verify';
+
+export interface CreateTaskRequest {
+  title: string;
+  description?: string;
+  priority?: number;
+  kind?: TaskKind;
+  requestedBy?: string;
+  assignedAgent?: string;
+  parentId?: number;
+  dependsOn?: string;
+  requiredTools?: string[];
 }
 
-// ─── Session ─────────────────────────────────────────────────────────────────
-
-export interface SessionNegotiation {
-  sessionId: string;
-  officeId: string;
-  agentName: string;
-  conversationId: string;
-  capabilities?: string[];
-  startedAt: string;
+export interface Task {
+  id: string;
+  title: string;
+  description?: string;
+  priority?: number;
+  kind?: TaskKind;
+  status: TaskStatus;
+  claimedBy?: string;
+  assignedAgent?: string;
+  requestedBy?: string;
+  parentId?: number;
+  dependsOn?: string;
+  resultSummary?: string;
+  createdAt: string;
+  updatedAt?: string;
+  completedAt?: string;
 }
 
-// ─── Paginated ───────────────────────────────────────────────────────────────
-
-export interface Paginated<T> {
-  data: T[];
-  total?: number;
-  offset?: number;
-  limit?: number;
-}
-
-// ─── API Response ────────────────────────────────────────────────────────────
-
-export interface APIError {
-  status: number;
+export interface TaskLog {
+  id: string;
+  taskId: string;
+  agent: string;
   message: string;
-  code?: string;
+  event: string;
+  createdAt: string;
 }
+
+export interface TaskDetail {
+  task: Task;
+  logs: TaskLog[];
+}
+
+export interface TaskArtifact {
+  id: string;
+  taskId: string;
+  kind: string;
+  path: string;
+  label?: string;
+  createdAt: string;
+}
+
+export interface UpdateTaskRequest {
+  status?: string;
+  result?: string;
+  error?: string;
+  assignedAgent?: string;
+}
+
+export interface VerifyTaskRequest {
+  accepted: boolean;
+  reviewer?: string;
+  comments?: string;
+}
+
+export interface ColonyMember {
+  name: string;
+  phase: string;
+  ready: boolean;
+  tasks: Array<{ id: string; title: string; status: string; result?: string }>;
+}
+
+export interface ColonyStatus {
+  allDone: boolean;
+  summary: string;
+  members: ColonyMember[];
+  pending: number;
+  failed: number;
+  done: number;
+}
+
+export interface OrchestrateSpec {
+  title: string;
+  description?: string;
+  kind?: string;
+  subtasks: Array<{
+    title: string;
+    description?: string;
+    agentName: string;
+    role?: string;
+    systemPrompt?: string;
+    kind?: string;
+    dependsOn?: string;
+    requiredTools?: string[];
+  }>;
+  provider?: string;
+  modelTier?: string;
+  timeout?: number;
+  onSubtaskDone?: (task: Task) => void;
+}
+
+export interface OrchestrateResult {
+  parent: Task;
+  subtasks: Array<{ task: Task; agentName: string; result?: Task; status: string; error?: string }>;
+  artifacts: TaskArtifact[];
+}
+
+export interface TaskStats {
+  total: number;
+  pending: number;
+  claimed: number;
+  completed: number;
+  failed: number;
+}
+
+// ─── Files ──────────────────────────────────────────────────────────────────
+
+export interface FileInfo {
+  name: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface FileChanges {
+  events?: FileChangeEvent[];
+  serverTime?: number;
+  full_refresh?: boolean;
+}
+
+export interface FileChangeEvent {
+  type: 'created' | 'modified' | 'deleted';
+  name: string;
+  timestamp: number;
+}
+
+// ─── Chat ───────────────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  id: string;
+  from_agent: string;
+  to_agent: string;
+  body: string;
+  metadata?: Record<string, unknown> | null;
+  created_at: number;
+}
+
+export interface ChatConversation {
+  conversationId: string;
+  peerAddress: string;
+  agentName?: string;
+  groupName?: string;
+  lastMessage?: string;
+  lastMessageAt?: string;
+}
+
+// ─── External Agent (A2A) ───────────────────────────────────────────────────
+
+export interface JoinRequest {
+  code: string;
+  agent_name: string;
+  xmtp_address?: string;
+  public_key?: string;
+  capabilities?: string[];
+}
+
+export type OfficeType = 'personal' | 'team' | 'public';
+
+export interface OfficeContext {
+  name: string;
+  type: OfficeType;
+  member_count: number;
+  agent_count: number;
+  owner_is_caller: boolean;
+}
+
+export interface JoinResponse {
+  employee_id: string | null;
+  bot_id: string;
+  office_id: string;
+  api_key: string;
+  agent_name: string;
+  office?: OfficeContext;
+  xmtp: {
+    office_group_id: string | null;
+    office_xmtp_address?: string | null;
+    registered: boolean;
+  };
+}
+
+export interface CloneRequest {
+  /** Invite code for target office. If omitted, clones into current office. */
+  code?: string;
+  name?: string;
+}
+
+export interface CloneResponse {
+  clone_name: string;
+  clone_id: string;
+  office_id: string;
+  origin_name: string;
+  employee_id: string | null;
+  status: string;
+  transfer_id?: string;
+  upload_url?: string;
+}
+
+export interface HeartbeatResponse {
+  ok: boolean;
+}
+
+// ─── Consciousness Transfer ─────────────────────────────────────────────────
+
+export interface ManifestFileEntry {
+  sha256: string;
+  size: number;
+}
+
+export interface ManifestStats {
+  identity_files: number;
+  memory_sessions: number;
+  memory_has_hybrid: boolean;
+  skill_count: number;
+  script_count: number;
+  cron_jobs: number;
+  task_count: number;
+  agent_messages: number;
+  workspace_files: number;
+  bundle_size_bytes: number;
+  skipped_dirs: string[];
+  model_primary: string | null;
+}
+
+export interface Manifest {
+  version: '1.0';
+  agent_name: string;
+  origin: string;
+  packed_at: string;
+  files: Record<string, ManifestFileEntry>;
+  stats: ManifestStats;
+}
+
+export interface DiscoveryReport {
+  identityFiles: string[];
+  memoryFiles: number;
+  hasHybridMemory: boolean;
+  skillCount: number;
+  scriptCount: number;
+  cronJobs: number;
+  workspaceFiles: number;
+  taskCount: number;
+  agentMessages: number;
+  skippedDirs: string[];
+  warnings: string[];
+}
+
+export interface PackageResult {
+  manifest: Manifest;
+  bundlePath: string;
+  bundleSize: number;
+  discoveryReport: DiscoveryReport;
+}
+
+export interface PhaseResult {
+  phase: string;
+  status: 'ok' | 'partial' | 'failed' | 'skipped';
+  filesWritten: number;
+  filesFailed: string[];
+  warnings: string[];
+  error: string | null;
+  retryAttempted: boolean;
+  durationMs: number;
+}
+
+export interface TransferReport {
+  transfer_id: string;
+  origin_agent: string;
+  clone_name: string;
+  office_id: string;
+  started_at: string;
+  completed_at: string;
+  duration_ms: number;
+  overall_status: 'completed' | 'completed_with_warnings' | 'partial' | 'failed';
+  phases: Record<string, PhaseResult>;
+  summary: {
+    files_transferred: number;
+    files_failed: number;
+    memory_entries: number;
+    personality_transferred: boolean;
+    provider_preserved: boolean;
+    warnings: string[];
+    errors: string[];
+  };
+}
+
+export interface TransferStatus {
+  transfer_id: string;
+  phase: string;
+  progress: number;
+  message: string;
+  error?: string;
+  report?: TransferReport;
+}
+
+// ─── Marketplace ─────────────────────────────────────────────────────────────
+
+export interface MarketplaceExtension {
+  id: string;
+  extId: string;
+  version: string;
+  name: string;
+  description: string;
+  manifest: Record<string, unknown>;
+  category: string;
+  authorAgent: string;
+  authorOfficeId: string;
+  authorPubkey: string;
+  tarballS3Key: string;
+  tarballSha256: string;
+  licenseType: string;
+  licenseSpdx: string;
+  githubUrl: string;
+  priceCredits: number;
+  monthlyCredits: number;
+  downloads: number;
+  status: string;
+  publishedAt: string;
+  updatedAt: string;
+}
+
+export interface InstalledExtension {
+  id: string;
+  officeId: string;
+  extId: string;
+  version: string;
+  name: string;
+  description: string;
+  manifest: Record<string, unknown>;
+  authorAgent: string;
+  authorPubkey: string;
+  status: string;
+  sidecarPort: number;
+  tarballS3Key: string;
+  tarballSha256: string;
+  installSource: string;
+  marketplaceExtId: string;
+  installedAt: string;
+  updatedAt: string;
+}
+
+// ─── Errors ──────────────────────────────────────────────────────────────────
 
 export class OS1Error extends Error {
   status: number;
